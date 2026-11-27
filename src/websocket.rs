@@ -39,14 +39,40 @@ pub fn set_upgrade_headers(headers: &mut HeaderMap) {
     );
 }
 
+pub enum Downstream {
+    Hyper(OnUpgrade),
+    Kit,
+}
+
+pub fn downstream(req: &mut axum::extract::Request) -> Option<Downstream> {
+    if req.extensions().get::<crate::plain::Transport>().is_some() {
+        Some(Downstream::Kit)
+    } else {
+        req.extensions_mut()
+            .remove::<OnUpgrade>()
+            .map(Downstream::Hyper)
+    }
+}
+
+type TunnelParts = (OnUpgrade, Option<Lease>);
+
+#[derive(Clone)]
+pub struct Tunnel(std::sync::Arc<std::sync::Mutex<Option<TunnelParts>>>);
+
+impl Tunnel {
+    pub fn take(self) -> Option<TunnelParts> {
+        self.0.lock().unwrap().take()
+    }
+}
+
 pub struct Handshake {
-    downstream: OnUpgrade,
+    downstream: Downstream,
     accept: String,
     protocols: Vec<header::HeaderValue>,
 }
 
 impl Handshake {
-    pub fn new(downstream: OnUpgrade, headers: &HeaderMap) -> Option<Self> {
+    pub fn new(downstream: Downstream, headers: &HeaderMap) -> Option<Self> {
         let key = single_value(headers, header::SEC_WEBSOCKET_KEY)?
             .to_str()
             .ok()?;
@@ -125,9 +151,17 @@ pub fn switch_protocols(
     set_upgrade_headers(response.headers_mut());
     response.headers_mut().remove(header::CONTENT_LENGTH);
 
+    let Downstream::Hyper(downstream) = handshake.downstream else {
+        response
+            .extensions_mut()
+            .insert(Tunnel(std::sync::Arc::new(std::sync::Mutex::new(Some((
+                upstream, lease,
+            ))))));
+        return response.map(|_| Body::empty());
+    };
     tokio::spawn(async move {
         let _lease = lease;
-        if let Ok((downstream, upstream)) = tokio::try_join!(handshake.downstream, upstream) {
+        if let Ok((downstream, upstream)) = tokio::try_join!(downstream, upstream) {
             let _ = tokio::io::copy_bidirectional(
                 &mut TokioIo::new(downstream),
                 &mut TokioIo::new(upstream),

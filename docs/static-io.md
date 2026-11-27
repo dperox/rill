@@ -12,6 +12,9 @@ to transfer directly to the socket when compression is disabled. HEAD and
 matching validators skip reads of the body. Small files through 64 KiB use
 batched buffered reads and can share the response within a request group.
 
+The same plaintext port accepts static, proxy, and WebSocket requests. An optional
+`RILL_STATIC_LISTEN` address adds a static-only listener.
+
 Use `RILL_SENDFILE=0` when cold or remote storage could stall a network
 worker that also serves latency-sensitive requests. A sendfile call can wait
 for source pages even with a nonblocking socket. TLS, HTTP/2, HTTP/3, byte

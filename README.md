@@ -76,7 +76,7 @@ Rill defaults to **one blocking worker** for filesystem operations and DNS. Set 
 
 ## Verification and performance
 
-`cargo test --locked` runs the Rust unit tests. The [testing guide](docs/testing.md) covers the HTTP and transport integration suites, including how to replay the 56 recorded HTTP cases. The [implementation notes](docs/crates.md) describe the Rust dependencies and the patches in Rill’s Hyper fork.
+`cargo test --locked` runs the Rust unit tests. The [testing guide](docs/testing.md) covers the HTTP and transport integration suites, including how to replay the 56 recorded HTTP cases. The [implementation notes](docs/crates.md) describe the Rust dependencies and HTTP transports.
 
 On Linux, Rill can use sendfile and cache immutable assets. Windows supports opt-in TransmitFile for large plaintext downloads. macOS uses buffered file delivery. See the [static file guide](docs/static-io.md) for platform behavior and the [benchmark report](bench/sendfile.md) for measured results and host details.
 
@@ -86,4 +86,4 @@ The [feature guide](docs/features.md) connects operator-visible behavior to acce
 
 ## License
 
-Rill’s original code and documentation are available under the [MIT License](LICENSE). Rill includes the [MIT notice for Hyper](notices/HYPER-LICENSE). The [Hyper patch notes](docs/hyper.md) describe the fork.
+Rill’s original code and documentation are available under the [MIT License](LICENSE). Rill includes the [MIT notice for Hyper](notices/HYPER-LICENSE). The [transport notes](docs/hyper.md) describe the HTTP/1 file path.

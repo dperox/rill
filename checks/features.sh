@@ -8,6 +8,7 @@ if [ -z "${RILL:-}" ]; then
 fi
 export RILL
 python3 checks/reload.py
+python3 checks/shared_listener.py
 python3 checks/websocket.py
 python3 checks/sites.py
 python3 checks/edge_routing.py

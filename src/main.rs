@@ -1,7 +1,9 @@
 mod access_log;
 mod edge;
-mod kit_static;
 mod migration;
+mod plain;
+#[cfg(windows)]
+mod transmitfile;
 
 mod policy;
 mod reload;
@@ -105,7 +107,7 @@ async fn proxy(pool: Arc<Pool>, mut req: Request) -> Response {
         {
             return error_page(StatusCode::BAD_REQUEST);
         }
-        let Some(upgrade) = req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>() else {
+        let Some(upgrade) = websocket::downstream(&mut req) else {
             return error_page(StatusCode::BAD_REQUEST);
         };
         Some(upgrade)
@@ -296,8 +298,8 @@ async fn run(check: bool) -> io::Result<()> {
                     Target::Proxy(_)
                         if req
                             .extensions()
-                            .get::<kit_static::StaticRequest>()
-                            .is_some() =>
+                            .get::<plain::Transport>()
+                            .is_some_and(|mode| mode.static_only) =>
                     {
                         error_page(StatusCode::NOT_FOUND)
                     }
@@ -360,28 +362,42 @@ async fn run(check: bool) -> io::Result<()> {
     }
     if let Some(addr) = static_addr {
         let static_listener = TcpListener::bind(addr).await?;
-        jobs.spawn_local(kit_static::serve(
+        jobs.spawn_local(plain::serve(
             static_listener,
             app.clone(),
-            enable_sendfile && !compression,
+            plain::Transport {
+                regions: enable_sendfile && !compression,
+                static_only: true,
+            },
         ));
     }
-    jobs.spawn(async move {
-        let listener = listener.tap_io(|stream| {
-            if let Err(error) = stream.set_nodelay(true) {
-                eprintln!("could not set TCP_NODELAY on client socket: {error}");
+    if enable_sendfile && !compression {
+        jobs.spawn_local(plain::serve(
+            listener,
+            app,
+            plain::Transport {
+                regions: true,
+                static_only: false,
+            },
+        ));
+    } else {
+        jobs.spawn(async move {
+            let listener = listener.tap_io(|stream| {
+                if let Err(error) = stream.set_nodelay(true) {
+                    eprintln!("could not set TCP_NODELAY on client socket: {error}");
+                }
+            });
+            if requires_client_addr {
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                )
+                .await
+            } else {
+                axum::serve(listener, app).await
             }
         });
-        if requires_client_addr {
-            axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-            .await
-        } else {
-            axum::serve(listener, app).await
-        }
-    });
+    }
     jobs.join_next()
         .await
         .ok_or_else(|| io::Error::other("no listeners"))?

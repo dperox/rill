@@ -88,7 +88,7 @@ fn ordinary_file(
     let (reply, receive) = oneshot::channel();
     let regions = req
         .extensions()
-        .get::<crate::kit_static::StaticRequest>()
+        .get::<crate::plain::Transport>()
         .is_some_and(|r| r.regions);
     #[cfg(target_os = "linux")]
     let cache = if let Some(cache) = cache.filter(|_| regions) {
@@ -126,11 +126,22 @@ fn ordinary_file(
         }
         let pending = Arc::new(Mutex::new(vec![job]));
         *slot = Arc::downgrade(&pending);
-        tokio::task::spawn_blocking(move || {
-            // Seal the group before the first open. New arrivals must observe a fresh lookup.
-            let jobs = std::mem::take(&mut *pending.lock().unwrap());
-            serve_batch(jobs);
-        });
+        let submit = move || {
+            tokio::task::spawn_blocking(move || {
+                // Seal before the first lookup. Later arrivals must see a fresh open.
+                let jobs = std::mem::take(&mut *pending.lock().unwrap());
+                serve_batch(jobs);
+            });
+        };
+        if regions {
+            // Let other ready connections join the batch before the blocking
+            // worker seals it. There is no timer or minimum batch size.
+            tokio::task::spawn_local(async move {
+                submit();
+            });
+        } else {
+            submit();
+        }
     });
     Some(receive)
 }

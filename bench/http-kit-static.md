@@ -1,6 +1,36 @@
-# Fork-free HTTP/1 static listener prototype
+# Fork-free HTTP/1 file delivery
 
-Base: Rill `351ace3`. Stock Hyper 1.13.0 serves the regular listener. Set
+## Shared plaintext port
+
+The main listener serves static files, proxied requests and WebSocket upgrades
+on one port. Both builds below ran on the same WSL2 host and CPU placements
+as the original experiment, with 64 clients, three alternating rounds and
+validated bodies. The baseline is the patched Hyper build at `351ace3`.
+
+| Workload | Shared port | Patched Hyper |
+|---|---:|---:|
+| 4 KiB requests/s | 31,509 | 29,498 |
+| 4 KiB p95 | 2.381 ms | 2.737 ms |
+| 256 KiB requests/s | 17,079 | 15,867 |
+| 256 KiB p95 | 4.307 ms | 5.518 ms |
+| Idle process RSS, 4,096 static keep-alive clients | 22.79 MiB | 32.59 MiB |
+
+All idle connections returned the expected 4 KiB body before and after the
+five-second wait. Connections running the full streaming driver retain a
+larger state. The idle figure measures the compact GET path. To reproduce
+the shared-port figures with the commands below, use `target/release/rill`
+in place of `bench/kit-static-listener`.
+
+On one connection, Linux strace recorded a 262,144-byte sendfile before a
+proxied POST and a second 262,144-byte sendfile after it. Forcing sendfile to
+return EINVAL also passed the byte checks through the buffered fallback.
+Native Windows passed its pipeline, two-slot saturation, reset, range,
+validator and gzip tests with TransmitFile enabled.
+
+## Original dedicated-listener experiment
+
+
+Historical results for prototype commit `445eaa1`. Base: Rill `351ace3`. Stock Hyper 1.13.0 serves the regular listener. Set
 `RILL_STATIC_LISTEN` to bind an additional plaintext HTTP/1 static listener
 driven by http-kit-h1 0.6.2. Both use the existing router, static-file
 selection and middleware. The dedicated listener handles bodyless GET and HEAD

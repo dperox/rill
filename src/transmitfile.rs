@@ -7,10 +7,7 @@ use std::{
     sync::{Arc, Mutex, OnceLock, mpsc},
     thread,
 };
-use tokio::{
-    net::tcp::OwnedWriteHalf,
-    sync::{Semaphore, SemaphorePermit, oneshot},
-};
+use tokio::sync::{Semaphore, SemaphorePermit, oneshot};
 use windows_sys::Win32::{
     Foundation::{ERROR_IO_PENDING, WAIT_TIMEOUT},
     Networking::WinSock::{TransmitFile, WSAGetLastError, WSAGetOverlappedResult},
@@ -30,8 +27,9 @@ pub struct Slot {
 }
 struct Job {
     _permit: SemaphorePermit<'static>,
-    socket: Arc<OwnedWriteHalf>,
+    socket: Arc<socket2::Socket>,
     file: File,
+    offset: u64,
     len: u64,
     done: oneshot::Sender<io::Result<u64>>,
 }
@@ -62,31 +60,44 @@ fn workers() -> Option<mpsc::Sender<Job>> {
     Some(tx)
 }
 
-impl Slot {
-    pub fn body(
-        self,
-        socket: Arc<OwnedWriteHalf>,
-        file: File,
-        len: u64,
-    ) -> hyper::ext::Http1DirectBody {
-        hyper::ext::Http1DirectBody::new(len, async move {
-            let (done, completion) = oneshot::channel();
-            self.queue
-                .send(Job {
-                    _permit: self.permit,
-                    socket,
-                    file,
-                    len,
-                    done,
-                })
-                .map_err(|_| io::Error::other("TransmitFile workers stopped"))?;
-            completion.await.map_err(io::Error::other)?
-        })
+pub fn socket(stream: &tokio::net::TcpStream) -> io::Result<Arc<socket2::Socket>> {
+    socket2::SockRef::from(stream).try_clone().map(Arc::new)
+}
+
+pub async fn send<W: http_kit_io::SendFile, F: std::borrow::Borrow<File> + 'static>(
+    writer: &mut W,
+    socket: &Arc<socket2::Socket>,
+    file: F,
+    offset: u64,
+    len: usize,
+) -> http_kit_io::BufResult<usize, F> {
+    let Some(slot) = reserve() else {
+        return writer.send_file(file, offset, len).await;
+    };
+    let result = async {
+        let (done, completion) = oneshot::channel();
+        let len = len.min(1 << 30);
+        slot.queue
+            .send(Job {
+                _permit: slot.permit,
+                socket: socket.clone(),
+                file: file.borrow().try_clone()?,
+                offset,
+                len: len as u64,
+                done,
+            })
+            .map_err(|_| io::Error::other("TransmitFile workers stopped"))?;
+        completion
+            .await
+            .map_err(io::Error::other)?
+            .map(|n| n as usize)
     }
+    .await;
+    http_kit_io::BufResult(result, file)
 }
 
 fn transfer(job: &Job) -> io::Result<u64> {
-    let socket = job.socket.as_ref().as_ref().as_raw_socket() as usize;
+    let socket = job.socket.as_raw_socket() as usize;
     let mut offset = 0;
     while offset < job.len && !job.done.is_closed() {
         // Leave room below Winsock's signed 2 GiB per-call ceiling.
@@ -99,8 +110,12 @@ fn transfer(job: &Job) -> io::Result<u64> {
         }
         let event = unsafe { OwnedHandle::from_raw_handle(handle) };
         let mut op = OVERLAPPED::default();
-        op.Anonymous.Anonymous.Offset = offset as u32;
-        op.Anonymous.Anonymous.OffsetHigh = (offset >> 32) as u32;
+        let file_offset = job
+            .offset
+            .checked_add(offset)
+            .ok_or_else(|| io::Error::other("file offset overflow"))?;
+        op.Anonymous.Anonymous.Offset = file_offset as u32;
+        op.Anonymous.Anonymous.OffsetHigh = (file_offset >> 32) as u32;
         // The low bit suppresses completion-port delivery for this operation.
         // Tokio owns the socket's IOCP and must never receive our OVERLAPPED.
         op.hEvent = event.as_raw_handle().map_addr(|a| a | 1);
