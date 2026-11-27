@@ -1,0 +1,10 @@
+[request]
+method = "HEAD"
+path = "/index.html"
+
+[response]
+status = 200
+
+[response.headers]
+accept-ranges = "bytes"
+content-type = "text/html"

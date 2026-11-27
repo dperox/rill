@@ -1,0 +1,13 @@
+[request]
+method = "GET"
+path = "/api/items"
+
+[request.headers]
+If-None-Match = "*"
+if-none-match = "*"
+
+[response]
+status = 400
+
+[response.headers]
+content-type = "text/html"

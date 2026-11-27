@@ -1,0 +1,56 @@
+{"name":"01-index","method":"GET","path":"/"}
+{"name":"02-head","method":"HEAD","path":"/index.html"}
+{"name":"03-binary","method":"GET","path":"/bytes.bin?v=1"}
+{"name":"04-range","method":"GET","path":"/bytes.bin","headers":{"Range":"bytes=3-9"}}
+{"name":"05-missing","method":"GET","path":"/missing"}
+{"name":"06-proxy","method":"GET","path":"/api/search?q=a%20b","headers":{"X-Test":"trace"}}
+{"name":"07-post","method":"POST","path":"/api/upload","headers":{"Content-Type":"text/plain"},"body":"from client"}
+{"name":"08-status","method":"GET","path":"/api/teapot"}
+{"name":"09-repeat","method":"GET","path":"/api/search?q=a%20b","headers":{"X-Test":"trace"}}
+{"name":"10-range-unsatisfiable","method":"GET","path":"/bytes.bin","headers":{"Range":"bytes=256-"}}
+{"name":"11-range-head-unsatisfiable","method":"HEAD","path":"/bytes.bin","headers":{"Range":"bytes=256-"}}
+{"name":"12-modified-since-exact","method":"GET","path":"/index.html","headers":{"If-Modified-Since":"Tue, 14 Nov 2023 22:13:20 GMT"}}
+{"name":"13-modified-since-older","method":"GET","path":"/index.html","headers":{"If-Modified-Since":"Tue, 14 Nov 2023 22:13:19 GMT"}}
+{"name":"14-modified-since-future","method":"GET","path":"/index.html","headers":{"If-Modified-Since":"Tue, 14 Nov 2023 22:13:21 GMT"}}
+{"name":"15-unmodified-since-older","method":"GET","path":"/index.html","headers":{"If-Unmodified-Since":"Tue, 14 Nov 2023 22:13:19 GMT"}}
+{"name":"16-none-match-exact","method":"GET","path":"/index.html","headers":{"If-None-Match":"\"6553f100-14\""}}
+{"name":"17-none-match-weak-list","method":"GET","path":"/index.html","headers":{"If-None-Match":"\"other\", W/\"6553f100-14\""}}
+{"name":"18-none-match-miss","method":"GET","path":"/index.html","headers":{"If-None-Match":"\"other\""}}
+{"name":"19-match-failed","method":"GET","path":"/index.html","headers":{"If-Match":"\"other\""}}
+{"name":"20-conditional-range","method":"GET","path":"/bytes.bin","headers":{"If-None-Match":"*","Range":"bytes=256-"}}
+{"name":"21-conditional-miss-range","method":"GET","path":"/bytes.bin","headers":{"If-None-Match":"\"other\"","Range":"bytes=-7"}}
+{"name":"22-conditional-missing","method":"GET","path":"/missing","headers":{"If-Match":"*","If-None-Match":"*"}}
+{"name":"23-date-match-etag-miss","method":"GET","path":"/index.html","headers":{"If-Modified-Since":"Tue, 14 Nov 2023 22:13:20 GMT","If-None-Match":"\"other\""}}
+{"name":"24-empty-file","method":"GET","path":"/empty.bin"}
+{"name":"25-empty-file-head","method":"HEAD","path":"/empty.bin"}
+{"name":"26-nested-index","method":"GET","path":"/guide/?lang=en"}
+{"name":"27-escaped-file-name","method":"GET","path":"/hello%20world.txt?v=2"}
+{"name":"28-head-missing","method":"HEAD","path":"/missing"}
+{"name":"29-post-static","method":"POST","path":"/index.html","body":"hello"}
+{"name":"30-range-first-byte","method":"GET","path":"/bytes.bin","headers":{"Range":"bytes=0-0"}}
+{"name":"31-range-last-byte","method":"GET","path":"/bytes.bin","headers":{"Range":"bytes=255-"}}
+{"name":"32-range-end-past-eof","method":"GET","path":"/bytes.bin","headers":{"Range":"bytes=250-1000"}}
+{"name":"33-range-head","method":"HEAD","path":"/bytes.bin","headers":{"Range":"bytes=3-9"}}
+{"name":"34-if-range-etag-match","method":"GET","path":"/bytes.bin","headers":{"Range":"bytes=0-3","If-Range":"\"6553f100-100\""}}
+{"name":"35-if-range-etag-stale","method":"GET","path":"/bytes.bin","headers":{"Range":"bytes=0-3","If-Range":"\"old\""}}
+{"name":"36-if-range-etag-weak","method":"GET","path":"/bytes.bin","headers":{"Range":"bytes=0-3","If-Range":"W/\"6553f100-100\""}}
+{"name":"37-if-range-date-match","method":"GET","path":"/bytes.bin","headers":{"Range":"bytes=0-3","If-Range":"Tue, 14 Nov 2023 22:13:20 GMT"}}
+{"name":"38-if-range-date-stale","method":"GET","path":"/bytes.bin","headers":{"Range":"bytes=256-","If-Range":"Tue, 14 Nov 2023 22:13:19 GMT"}}
+{"name":"39-if-match-weak","method":"GET","path":"/index.html","headers":{"If-Match":"W/\"6553f100-14\""}}
+{"name":"40-if-match-strong-list","method":"GET","path":"/index.html","headers":{"If-Match":"\"old\", \"6553f100-14\""}}
+{"name":"41-head-none-match","method":"HEAD","path":"/index.html","headers":{"If-None-Match":"\"6553f100-14\""}}
+{"name":"42-duplicate-none-match","method":"GET","path":"/index.html","headers":{"If-None-Match":"\"old\"","if-none-match":"\"6553f100-14\""}}
+{"name":"43-duplicate-if-match","method":"GET","path":"/index.html","headers":{"If-Match":"\"6553f100-14\"","if-match":"\"6553f100-14\""}}
+{"name":"44-modified-since-invalid","method":"GET","path":"/index.html","headers":{"If-Modified-Since":"unknown"}}
+{"name":"45-unmodified-since-exact","method":"GET","path":"/index.html","headers":{"If-Unmodified-Since":"Tue, 14 Nov 2023 22:13:20 GMT"}}
+{"name":"46-precondition-before-range","method":"GET","path":"/bytes.bin","headers":{"If-Match":"\"old\"","Range":"bytes=256-"}}
+{"name":"47-proxy-put-binary","method":"PUT","path":"/api/upload","headers":{"Content-Type":"application/octet-stream","X-Test":"binary"},"body_base64":"AP+AQQ=="}
+{"name":"48-proxy-delete-query","method":"DELETE","path":"/api/items?id=1&id=2","headers":{"X-Test":"delete"}}
+{"name":"49-proxy-empty-post","method":"POST","path":"/api/upload","body":""}
+{"name":"50-proxy-prefix-boundary","method":"GET","path":"/apiary/item"}
+{"name":"51-duplicate-modified-since","method":"GET","path":"/missing","headers":{"If-Modified-Since":"Tue, 14 Nov 2023 22:13:20 GMT","if-modified-since":"Tue, 14 Nov 2023 22:13:20 GMT"}}
+{"name":"52-duplicate-unmodified-since","method":"GET","path":"/index.html","headers":{"If-Unmodified-Since":"Tue, 14 Nov 2023 22:13:19 GMT","if-unmodified-since":"Tue, 14 Nov 2023 22:13:20 GMT"}}
+{"name":"53-duplicate-if-range","method":"GET","path":"/bytes.bin","headers":{"Range":"bytes=0-3","If-Range":"old","if-range":"new"}}
+{"name":"54-proxy-duplicate-condition","method":"GET","path":"/api/items","headers":{"If-None-Match":"*","if-none-match":"*"}}
+{"name":"55-head-if-range-stale","method":"HEAD","path":"/bytes.bin","headers":{"Range":"bytes=0-3","If-Range":"Tue, 14 Nov 2023 22:13:19 GMT"}}
+{"name":"56-if-range-stale-none-match","method":"GET","path":"/bytes.bin","headers":{"Range":"bytes=256-","If-Range":"Tue, 14 Nov 2023 22:13:19 GMT","If-None-Match":"*"}}

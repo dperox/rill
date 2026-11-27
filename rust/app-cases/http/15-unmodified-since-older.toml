@@ -1,0 +1,12 @@
+[request]
+method = "GET"
+path = "/index.html"
+
+[request.headers]
+If-Unmodified-Since = "Tue, 14 Nov 2023 22:13:19 GMT"
+
+[response]
+status = 412
+
+[response.headers]
+content-type = "text/html"

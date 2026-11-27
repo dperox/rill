@@ -1,0 +1,14 @@
+[request]
+method = "PUT"
+path = "/api/upload"
+body_base64 = "AP+AQQ=="
+
+[request.headers]
+Content-Type = "application/octet-stream"
+X-Test = "binary"
+
+[response]
+status = 200
+
+[response.headers]
+content-type = "application/json"

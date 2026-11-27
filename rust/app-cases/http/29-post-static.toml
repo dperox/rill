@@ -1,0 +1,10 @@
+[request]
+method = "POST"
+path = "/index.html"
+body = "hello"
+
+[response]
+status = 405
+
+[response.headers]
+content-type = "text/html"

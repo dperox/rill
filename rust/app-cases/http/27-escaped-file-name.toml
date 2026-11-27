@@ -1,0 +1,10 @@
+[request]
+method = "GET"
+path = "/hello%20world.txt?v=2"
+
+[response]
+status = 200
+
+[response.headers]
+accept-ranges = "bytes"
+content-type = "text/plain"

@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rill
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rill
+  template:
+    metadata:
+      labels:
+        app: rill
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rill
+          image: rill:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: LISTEN
+              value: "0.0.0.0:8080"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: http
+          livenessProbe:
+            tcpSocket:
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rill
+spec:
+  type: ClusterIP
+  selector:
+    app: rill
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

@@ -1,0 +1,9 @@
+[request]
+method = "GET"
+path = "/index.html"
+
+[request.headers]
+If-None-Match = '"other", W/"6553f100-14"'
+
+[response]
+status = 304

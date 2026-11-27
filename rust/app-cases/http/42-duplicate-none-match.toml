@@ -1,0 +1,13 @@
+[request]
+method = "GET"
+path = "/index.html"
+
+[request.headers]
+If-None-Match = '"old"'
+if-none-match = '"6553f100-14"'
+
+[response]
+status = 400
+
+[response.headers]
+content-type = "text/html"

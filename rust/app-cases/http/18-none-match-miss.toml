@@ -1,0 +1,13 @@
+[request]
+method = "GET"
+path = "/index.html"
+
+[request.headers]
+If-None-Match = '"other"'
+
+[response]
+status = 200
+
+[response.headers]
+accept-ranges = "bytes"
+content-type = "text/html"

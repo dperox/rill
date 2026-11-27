@@ -1,0 +1,13 @@
+[request]
+method = "POST"
+path = "/api/upload"
+body = "from client"
+
+[request.headers]
+Content-Type = "text/plain"
+
+[response]
+status = 200
+
+[response.headers]
+content-type = "application/json"
