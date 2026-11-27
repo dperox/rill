@@ -1,7 +1,6 @@
 //! JSON access records emitted when the application produces response headers.
 use axum::http::uri::Authority;
 use axum::{
-    Router,
     extract::{ConnectInfo, Request},
     middleware::{self, Next},
     response::Response,
@@ -69,12 +68,15 @@ pub fn flush() {
     }
 }
 
-pub fn configure(app: Router) -> io::Result<(Router, bool)> {
+pub fn configure(app: crate::PlainApp) -> io::Result<(crate::PlainApp, bool)> {
     match env::var("RILL_ACCESS_LOG").as_deref() {
         Err(env::VarError::NotPresent) | Ok("0") => Ok((app, false)),
         Ok("1") => {
             let _ = writer();
-            Ok((app.layer(middleware::from_fn(record)), true))
+            Ok((
+                app.with_middleware(|router| router.layer(middleware::from_fn(record))),
+                true,
+            ))
         }
         _ => Err(io::Error::other("RILL_ACCESS_LOG must be 0 or 1")),
     }

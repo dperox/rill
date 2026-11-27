@@ -1,6 +1,6 @@
 //! Run each plaintext worker's socket readiness and local tasks on the same thread.
 use super::{Transport, is_transient_accept_error, spawn_socket};
-use axum::Router;
+use crate::PlainApp;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use http_kit_io::{FromStd, Listener, tokio::Tokio};
 use std::{io, net::TcpListener, time::Duration};
@@ -38,7 +38,7 @@ impl WorkerReactors {
     pub async fn serve(
         self,
         listener: tokio::net::TcpListener,
-        app: Router,
+        app: PlainApp,
         transport: Transport,
     ) -> io::Result<()> {
         let listener = listener.into_std()?;
@@ -74,7 +74,7 @@ impl WorkerReactors {
     }
 }
 
-async fn accept(listener: TcpListener, app: Router, transport: Transport) -> io::Result<()> {
+async fn accept(listener: TcpListener, app: PlainApp, transport: Transport) -> io::Result<()> {
     let listener = Tokio.tcp_listener(listener)?;
     loop {
         let (stream, peer) = match listener.accept().await {

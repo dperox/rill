@@ -1,13 +1,13 @@
 //! Serve complete bodyless heads without retaining a streaming exchange while idle.
 use super::{Transport, dispatch};
-use axum::Router;
+use crate::PlainApp;
 use http_kit::{Body, FileRegion, Request};
 use http_kit_io::{BufResult, Write};
 use std::{io, net::SocketAddr};
 pub(super) async fn short_request<W: Write + http_kit_io::SendFile>(
     pending: &mut bytes::BytesMut,
     writer: &mut W,
-    app: Router,
+    app: PlainApp,
     peer: SocketAddr,
     transport: Transport,
 ) -> io::Result<Option<bool>> {

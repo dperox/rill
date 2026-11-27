@@ -112,7 +112,7 @@ pub fn credentials(
     })
 }
 
-pub fn redirect_from_env(app: Router) -> io::Result<Router> {
+pub fn redirect_from_env(app: crate::PlainApp) -> io::Result<crate::PlainApp> {
     use axum::http::uri::Authority;
     use axum::{
         extract::State,
@@ -152,7 +152,9 @@ pub fn redirect_from_env(app: Router) -> io::Result<Router> {
         }
         Redirect::permanent(&format!("https://{target}{path}")).into_response()
     }
-    Ok(app.layer(middleware::from_fn_with_state(authority, redirect)))
+    Ok(app.with_middleware(|router| {
+        router.layer(middleware::from_fn_with_state(authority, redirect))
+    }))
 }
 
 pub async fn serve(address: &str, app: Router, live: crate::reload::Live) -> io::Result<()> {

@@ -1,5 +1,6 @@
 //! Plaintext HTTP/1 with ordered file regions and prior-knowledge HTTP/2 selection.
-use axum::{Router, extract::ConnectInfo};
+use crate::PlainApp;
+use axum::extract::ConnectInfo;
 use http_kit::{Body, BodyFrame, FileRegion, Request, Response};
 use http_kit_h1::{ServerConfig, ServerConnection, ServerOutcome, Upgraded};
 use http_kit_io::{BufResult, FromStd, Listener, Read, Split, Write, tokio::Tokio};
@@ -20,7 +21,6 @@ mod prefetched;
 mod short;
 mod workers;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
-use tower::ServiceExt;
 pub use workers::WorkerReactors;
 
 pub(crate) fn is_transient_accept_error(error: &io::Error) -> bool {
@@ -80,7 +80,7 @@ pub struct Transport {
 
 pub async fn serve(
     listener: tokio::net::TcpListener,
-    app: Router,
+    app: PlainApp,
     transport: Transport,
 ) -> io::Result<()> {
     let listener = Tokio.tcp_listener(listener.into_std()?)?;
@@ -148,7 +148,7 @@ pub async fn serve(
 fn spawn_socket(
     stream: http_kit_io::tokio::TcpStream,
     peer: SocketAddr,
-    app: Router,
+    app: PlainApp,
     transport: Transport,
 ) {
     tokio::task::spawn_local(async move {
@@ -159,7 +159,7 @@ fn spawn_socket(
 async fn serve_socket(
     stream: http_kit_io::tokio::TcpStream,
     peer: SocketAddr,
-    app: Router,
+    app: PlainApp,
     transport: Transport,
 ) -> io::Result<()> {
     stream.get_ref().set_nodelay(true)?;
@@ -181,7 +181,7 @@ async fn serve_socket(
                     }
                     req
                 })
-                .service(app.into_service::<hyper::body::Incoming>());
+                .service(app.router.into_service::<hyper::body::Incoming>());
             let io = PrefetchedTcp {
                 pending: pending.freeze(),
                 inner: stream.into_inner(),
@@ -341,7 +341,7 @@ async fn relay<R: Read, W: Write>(
 }
 
 async fn dispatch(
-    app: Router,
+    app: PlainApp,
     peer: SocketAddr,
     transport: Transport,
     req: Request,
@@ -349,15 +349,14 @@ async fn dispatch(
     let (mut parts, incoming) = req.into_parts();
     parts.extensions.insert(ConnectInfo(peer));
     parts.extensions.insert(transport);
-    app.oneshot(axum::extract::Request::from_parts(
+    app.respond(axum::extract::Request::from_parts(
         parts,
         axum::body::Body::new(incoming),
     ))
     .await
-    .unwrap()
 }
 
-async fn respond(app: Router, peer: SocketAddr, transport: Transport, req: Request) -> Response {
+async fn respond(app: PlainApp, peer: SocketAddr, transport: Transport, req: Request) -> Response {
     let response = dispatch(app, peer, transport, req).await;
     let (mut parts, body) = response.into_parts();
     let body = match parts.extensions.remove::<FileRegion>() {

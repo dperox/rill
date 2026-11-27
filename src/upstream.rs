@@ -1,4 +1,5 @@
 //! Outbound HTTP transport and optional health probes.
+mod fixed;
 use super::*;
 use axum::http::uri::Scheme;
 use hyper_rustls::{ConfigBuilderExt, HttpsConnector, HttpsConnectorBuilder};
@@ -43,8 +44,23 @@ impl Endpoint {
     }
 }
 
+pub enum RequestError {
+    Connect,
+    Exchange,
+}
+
+impl From<hyper_util::client::legacy::Error> for RequestError {
+    fn from(value: hyper_util::client::legacy::Error) -> Self {
+        if value.is_connect() {
+            Self::Connect
+        } else {
+            Self::Exchange
+        }
+    }
+}
+
 pub enum Transport {
-    Plain(Client<HttpConnector, Body>),
+    Plain(Client<HttpConnector, Body>, Option<fixed::Fixed>),
     Secure(Client<HttpsConnector<HttpConnector>, Body>),
 }
 
@@ -129,14 +145,24 @@ impl Transport {
         Ok(())
     }
 
-    pub fn new(https: bool) -> io::Result<Self> {
+    pub fn new(peers: &[Endpoint]) -> io::Result<Self> {
         let mut builder = Client::builder(TokioExecutor::new());
-        builder.pool_max_idle_per_host(MAX_IDLE_PER_HOST);
+        let fixed = match peers {
+            [peer] if peer.scheme == Scheme::HTTP => {
+                peer.authority.as_str().parse().ok().map(fixed::Fixed::new)
+            }
+            _ => None,
+        };
+        // Share the existing per-host idle budget with the general HTTP client.
+        let reserved = if fixed.is_some() { fixed::CAPACITY } else { 0 };
+        builder
+            .pool_max_idle_per_host(MAX_IDLE_PER_HOST - reserved)
+            .pool_timer(hyper_util::rt::TokioTimer::new());
         let mut http = HttpConnector::new();
         http.set_connect_timeout(Some(CONNECT_TIMEOUT));
         http.set_nodelay(true);
-        if !https {
-            return Ok(Self::Plain(builder.build(http)));
+        if peers.iter().all(|p| p.scheme == Scheme::HTTP) {
+            return Ok(Self::Plain(builder.build(http), fixed));
         }
         http.enforce_http(false);
         let tls = Self::build_tls_config()?;
@@ -148,13 +174,21 @@ impl Transport {
         Ok(Self::Secure(builder.build(connector)))
     }
 
+    pub fn fixed(&self) -> Option<&fixed::Fixed> {
+        if let Self::Plain(_, fixed) = self {
+            fixed.as_ref()
+        } else {
+            None
+        }
+    }
+
     pub async fn request(
         &self,
         req: Request,
-    ) -> Result<hyper::Response<hyper::body::Incoming>, hyper_util::client::legacy::Error> {
+    ) -> Result<hyper::Response<hyper::body::Incoming>, RequestError> {
         match self {
-            Self::Plain(client) => client.request(req).await,
-            Self::Secure(client) => client.request(req).await,
+            Self::Plain(client, _) => client.request(req).await.map_err(Into::into),
+            Self::Secure(client) => client.request(req).await.map_err(Into::into),
         }
     }
 }
@@ -252,6 +286,15 @@ impl Health {
 impl Pool {
     pub fn select(self: &Arc<Self>, exclude: Option<usize>) -> Option<(usize, Option<Lease>)> {
         let len = self.servers.len();
+        // A fixed peer needs neither round-robin bookkeeping nor a least-connections lease.
+        if len == 1 {
+            return (exclude.is_none()
+                && self
+                    .healthy
+                    .first()
+                    .is_none_or(|h| h.load(Ordering::Relaxed)))
+            .then_some((0, None));
+        }
         let start = self.next.fetch_add(1, Ordering::Relaxed) % len;
         if exclude.is_none() && self.healthy.is_empty() && self.active.is_none() {
             return Some((start, None));

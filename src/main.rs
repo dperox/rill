@@ -102,7 +102,7 @@ fn strip_hop_headers(headers: &mut HeaderMap) {
         "transfer-encoding",
         "upgrade",
     ] {
-        headers.remove(name);
+        headers.remove(header::HeaderName::from_static(name));
     }
 }
 
@@ -177,16 +177,27 @@ async fn proxy(pool: Arc<Pool>, mut req: Request) -> Response {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     let result = loop {
         let peer = &pool.servers[index];
-        let mut parts = std::mem::take(req.uri_mut()).into_parts();
-        parts.scheme = Some(peer.scheme.clone());
-        parts.authority = Some(peer.authority.clone());
-        let Ok(uri) = Uri::from_parts(parts) else {
-            return error_page(StatusCode::BAD_REQUEST);
-        };
-        *req.uri_mut() = uri;
         req.headers_mut().insert(header::HOST, peer.host_header());
-        let result = tokio::time::timeout_at(deadline, pool.client.request(req)).await;
-        if matches!(&result, Ok(Err(error)) if error.is_connect())
+        let result = if let Some(fixed) = pool.client.fixed()
+            && handshake.is_none()
+            && req.method() == axum::http::Method::GET
+            && req.uri().scheme().is_none()
+            && req.uri().authority().is_none()
+            && req.uri().path().starts_with('/')
+            && axum::body::HttpBody::is_end_stream(req.body())
+        {
+            tokio::time::timeout_at(deadline, fixed.request(req)).await
+        } else {
+            let mut parts = std::mem::take(req.uri_mut()).into_parts();
+            parts.scheme = Some(peer.scheme.clone());
+            parts.authority = Some(peer.authority.clone());
+            let Ok(uri) = Uri::from_parts(parts) else {
+                return error_page(StatusCode::BAD_REQUEST);
+            };
+            *req.uri_mut() = uri;
+            tokio::time::timeout_at(deadline, pool.client.request(req)).await
+        };
+        if matches!(&result, Ok(Err(upstream::RequestError::Connect)))
             && let Some(next_request) = retry.take()
             && let Some((next_index, next_lease)) = pool.select(Some(index))
         {
@@ -424,20 +435,17 @@ fn env_utf8(name: &str) -> io::Result<Option<String>> {
     }
 }
 
-async fn run(
-    check: bool,
-    reactors: Option<plain::WorkerReactors>,
-    enable_sendfile: bool,
-    streams: Vec<streams::ListenerConfig>,
-) -> io::Result<()> {
-    let stream_chunk = static_io::stream_chunk_bytes()?;
-    let root = PathBuf::from(env::var_os("DOCUMENT_ROOT").unwrap_or_else(|| "public".into()));
-    let default_site = sites::Site::open(&root, stream_chunk)?;
-    let (live, tls_address) = reload::start(stream_chunk, check)?;
-    let routes = live.clone();
-    let app = Router::new().fallback_service(tower::service_fn(move |req: Request| {
+struct Dispatch {
+    live: reload::Live,
+    default_site: sites::Site,
+    stream_chunk: usize,
+}
+
+impl Dispatch {
+    // Select from one generation before yielding. In-flight requests retain their own target.
+    fn handle(&self, req: Request) -> impl Future<Output = Response> + Send + use<> {
         let host_check = routing::validate_host(&req);
-        let generation = routes.borrow();
+        let generation = self.live.borrow();
         let sni_mismatch = match &host_check {
             Ok(Some(authority)) => {
                 if let Some(edge::NegotiatedSni(sni)) =
@@ -452,7 +460,11 @@ async fn run(
             }
             _ => false,
         };
-        let pool = routing::pick(&generation.routes, &req);
+        let pool = routing::pick(
+            &generation.routes,
+            req.uri().path(),
+            host_check.as_ref().ok().and_then(Option::as_ref),
+        );
         let target = if let Some(pool) = pool {
             Target::Proxy(pool)
         } else {
@@ -470,10 +482,11 @@ async fn run(
                             .find(|(name, _)| host.host().eq_ignore_ascii_case(name))
                     })
             };
-            Target::Static(matched.map_or(&default_site, |(_, site)| site).clone())
+            Target::Static(matched.map_or(&self.default_site, |(_, site)| site).clone())
         };
+        let stream_chunk = self.stream_chunk;
         async move {
-            let response = if let Err(status) = host_check {
+            if let Err(status) = host_check {
                 error_page(status)
             } else if sni_mismatch {
                 error_page(StatusCode::MISDIRECTED_REQUEST)
@@ -501,10 +514,61 @@ async fn run(
                         .await
                     }
                 }
-            };
-            Ok::<_, std::convert::Infallible>(response)
+            }
         }
+    }
+}
+
+#[derive(Clone)]
+struct PlainApp {
+    router: Router,
+    direct: Option<Arc<Dispatch>>,
+}
+
+impl PlainApp {
+    // Installing any middleware disables direct dispatch by construction.
+    fn with_middleware(self, apply: impl FnOnce(Router) -> Router) -> Self {
+        Self {
+            router: apply(self.router),
+            direct: None,
+        }
+    }
+
+    async fn respond(self, req: Request) -> Response {
+        // Keep Axum's method-specific HEAD and CONNECT response handling.
+        if req.method() == axum::http::Method::GET
+            && let Some(dispatch) = self.direct
+        {
+            return dispatch.handle(req).await;
+        }
+        tower::ServiceExt::oneshot(self.router, req).await.unwrap()
+    }
+}
+
+async fn run(
+    check: bool,
+    reactors: Option<plain::WorkerReactors>,
+    enable_sendfile: bool,
+    streams: Vec<streams::ListenerConfig>,
+) -> io::Result<()> {
+    let stream_chunk = static_io::stream_chunk_bytes()?;
+    let root = PathBuf::from(env::var_os("DOCUMENT_ROOT").unwrap_or_else(|| "public".into()));
+    let default_site = sites::Site::open(&root, stream_chunk)?;
+    let (live, tls_address) = reload::start(stream_chunk, check)?;
+    let dispatch = Arc::new(Dispatch {
+        live: live.clone(),
+        default_site,
+        stream_chunk,
+    });
+    let fallback = dispatch.clone();
+    let app = Router::new().fallback_service(tower::service_fn(move |req| {
+        let future = fallback.handle(req);
+        async move { Ok::<_, std::convert::Infallible>(future.await) }
     }));
+    let app = PlainApp {
+        router: app,
+        direct: Some(dispatch),
+    };
     let initial_policies = live.borrow().policies.clone();
     let app = initial_policies.apply_inner(app, live.clone());
     let app = edge::redirect_from_env(app)?;
@@ -563,7 +627,7 @@ async fn run(
         jobs.spawn(async move { task.await.map_err(io::Error::other)? });
     }
     if let Some(address) = tls_address {
-        let secure = app.clone();
+        let secure = app.router.clone();
         jobs.spawn(async move { edge::serve(&address, secure, live).await });
     }
     if let Some(addr) = static_addr {
@@ -607,11 +671,16 @@ async fn run(
             if requires_client_addr {
                 axum::serve(
                     listener,
-                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                    app.router
+                        .into_make_service_with_connect_info::<std::net::SocketAddr>(),
                 )
                 .await
             } else {
-                axum::serve(listener, app).await
+                let service = tower::service_fn(move |req| {
+                    let app = app.clone();
+                    async move { Ok::<_, std::convert::Infallible>(app.respond(req).await) }
+                });
+                axum::serve(listener, tower::make::Shared::new(service)).await
             }
         });
     }

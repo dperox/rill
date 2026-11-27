@@ -66,7 +66,13 @@ pub fn validate_hostname(raw: &str, context: &str) -> io::Result<String> {
     Ok(raw.to_ascii_lowercase())
 }
 
-pub fn normalize_path(path: &str) -> String {
+pub fn normalize_path(path: &str) -> std::borrow::Cow<'_, str> {
+    if path.starts_with('/')
+        && !path.contains("//")
+        && !path.split('/').any(|s| matches!(s, "." | ".."))
+    {
+        return path.into();
+    }
     let mut segments: Vec<&str> = Vec::new();
     let trailing_slash = path.ends_with('/') && path.len() > 1;
     for segment in path.split('/') {
@@ -89,7 +95,7 @@ pub fn normalize_path(path: &str) -> String {
     if trailing_slash && !out.ends_with('/') {
         out.push('/');
     }
-    out
+    out.into()
 }
 
 pub fn has_traversal_segment(path: &str) -> bool {
@@ -142,11 +148,7 @@ pub fn load(
             .iter()
             .map(|s| upstream::Endpoint::parse(s))
             .collect::<io::Result<Vec<_>>>()?;
-        let client = upstream::Transport::new(
-            servers
-                .iter()
-                .any(|s| s.scheme == axum::http::uri::Scheme::HTTPS),
-        )?;
+        let client = upstream::Transport::new(&servers)?;
         let healthy = if health.is_some() {
             (0..servers.len()).map(|_| true.into()).collect()
         } else {
@@ -182,22 +184,20 @@ pub fn load(
     Ok(routes)
 }
 
-pub fn pick(routes: &[Route], req: &Request) -> Option<Arc<Pool>> {
-    let path = normalize_path(req.uri().path());
-    let host_header = std::cell::OnceCell::new();
-    for route in routes {
-        if !path.starts_with(&route.prefix) {
-            continue;
-        }
-        if let Some(expected) = &route.host {
-            let authority = host_header.get_or_init(|| authority(req)).as_ref();
-            if !authority.is_some_and(|a| a.host().eq_ignore_ascii_case(expected)) {
-                continue;
-            }
-        }
-        return Some(route.pool.clone());
+pub fn pick(routes: &[Route], path: &str, host: Option<&Authority>) -> Option<Arc<Pool>> {
+    if routes.is_empty() {
+        return None;
     }
-    None
+    let path = normalize_path(path);
+    routes
+        .iter()
+        .find(|route| {
+            path.starts_with(&route.prefix)
+                && route.host.as_ref().is_none_or(|expected| {
+                    host.is_some_and(|h| h.host().eq_ignore_ascii_case(expected))
+                })
+        })
+        .map(|route| route.pool.clone())
 }
 
 fn parse_clean_authority(raw: &str) -> Option<Authority> {

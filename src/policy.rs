@@ -1,5 +1,4 @@
 use axum::{
-    Router,
     body::{Body, Bytes, HttpBody},
     extract::{ConnectInfo, Request, State},
     http::{Extensions, HeaderMap, HeaderValue, Method, StatusCode, Version, header},
@@ -243,28 +242,38 @@ impl Policies {
             || self.access.limiter.is_some()
     }
 
-    pub fn apply_inner(&self, mut app: Router, live: crate::reload::Live) -> Router {
+    pub fn apply_inner(
+        &self,
+        mut app: crate::PlainApp,
+        live: crate::reload::Live,
+    ) -> crate::PlainApp {
         if self.compress {
-            app = app
-                .layer(middleware::from_fn(mark_for_compression))
-                .layer(
-                    CompressionLayer::new()
-                        .compress_when(DefaultPredicate::new().and(compressible)),
-                )
-                .layer(middleware::from_fn(weaken_compressed_etag));
+            app = app.with_middleware(|router| {
+                router
+                    .layer(middleware::from_fn(mark_for_compression))
+                    .layer(
+                        CompressionLayer::new()
+                            .compress_when(DefaultPredicate::new().and(compressible)),
+                    )
+                    .layer(middleware::from_fn(weaken_compressed_etag))
+            });
         }
         if self.cache.is_some() {
-            app = app.layer(middleware::from_fn_with_state(live, invalidate_on_write));
+            app = app.with_middleware(|router| {
+                router.layer(middleware::from_fn_with_state(live, invalidate_on_write))
+            });
         }
         app
     }
 
-    pub fn apply_access(&self, mut app: Router) -> Router {
+    pub fn apply_access(&self, mut app: crate::PlainApp) -> crate::PlainApp {
         if self.requires_client_addr() {
-            app = app.layer(middleware::from_fn_with_state(
-                self.access.clone(),
-                check_access,
-            ));
+            app = app.with_middleware(|router| {
+                router.layer(middleware::from_fn_with_state(
+                    self.access.clone(),
+                    check_access,
+                ))
+            });
         }
         app
     }
@@ -574,7 +583,7 @@ fn normalized_target(uri: &axum::http::Uri) -> Option<String> {
     let norm = crate::routing::normalize_path(pq.path());
     Some(match pq.query() {
         Some(query) => format!("{norm}?{query}"),
-        None => norm,
+        None => norm.into_owned(),
     })
 }
 
