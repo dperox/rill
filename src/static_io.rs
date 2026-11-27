@@ -44,8 +44,7 @@ pub fn stream_chunk_bytes() -> io::Result<usize> {
 struct FileJob {
     path: PathBuf,
     head: bool,
-    #[cfg(any(windows, target_os = "linux"))]
-    socket: Option<Arc<tokio::net::tcp::OwnedWriteHalf>>,
+    regions: bool,
     stream_chunk: usize,
     #[cfg(target_os = "linux")]
     cache: Option<Arc<AssetCache>>,
@@ -87,13 +86,15 @@ fn ordinary_file(
     }
 
     let (reply, receive) = oneshot::channel();
-    #[cfg(any(windows, target_os = "linux"))]
-    let socket = crate::plain::socket(req.version());
+    let regions = req
+        .extensions()
+        .get::<crate::kit_static::StaticRequest>()
+        .is_some_and(|r| r.regions);
     #[cfg(target_os = "linux")]
-    let cache = if let (Some(cache), Some(socket)) = (cache, socket.as_ref()) {
+    let cache = if let Some(cache) = cache.filter(|_| regions) {
         if AssetCache::eligible(uri_path) {
             if let Some(asset) = cache.get(path.as_os_str()) {
-                let _ = reply.send(Ok(asset.response(head, conditions, socket.clone())));
+                let _ = reply.send(Ok(asset.response(head, conditions)));
                 return Some(receive);
             }
             (!head).then(|| cache.clone())
@@ -108,8 +109,7 @@ fn ordinary_file(
     let job = FileJob {
         path,
         head,
-        #[cfg(any(windows, target_os = "linux"))]
-        socket,
+        regions,
         #[cfg(target_os = "linux")]
         cache,
         stream_chunk,
@@ -175,14 +175,12 @@ fn serve_batch(jobs: Vec<FileJob>) {
 fn read_file(job: &FileJob) -> io::Result<FileResponse> {
     // An earlier job in this sealed batch may have filled the cache.
     #[cfg(target_os = "linux")]
-    if let (Some(cache), Some(socket)) = (&job.cache, &job.socket)
+    if let Some(cache) = &job.cache
         && let Some(asset) = cache.get(job.path.as_os_str())
     {
-        return Ok(FileResponse::Separate(asset.response(
-            false,
-            &job.conditions,
-            socket.clone(),
-        )));
+        return Ok(FileResponse::Separate(
+            asset.response(false, &job.conditions),
+        ));
     }
     let mut opts = File::options();
     opts.read(true);
@@ -236,14 +234,12 @@ fn read_file(job: &FileJob) -> io::Result<FileResponse> {
         response = response.header(header::ETAG, value);
     }
     #[cfg(target_os = "linux")]
-    if let (Some(cache), Some(socket)) = (&job.cache, &job.socket) {
+    if let Some(cache) = &job.cache {
         let asset = cache::Asset::load(file, len, response, modified)?;
         let asset = cache.insert(job.path.clone().into_os_string(), asset);
-        return Ok(FileResponse::Separate(asset.response(
-            false,
-            &job.conditions,
-            socket.clone(),
-        )));
+        return Ok(FileResponse::Separate(
+            asset.response(false, &job.conditions),
+        ));
     }
     if job.head || len <= INLINE_LIMIT {
         let bytes = if job.head || len == 0 {
@@ -256,20 +252,9 @@ fn read_file(job: &FileJob) -> io::Result<FileResponse> {
             .map(FileResponse::Inline)
             .map_err(io::Error::other);
     }
-    #[cfg(target_os = "linux")]
-    if let Some(socket) = &job.socket {
+    if job.regions {
         return response
-            .extension(direct_body(socket.clone(), file, len))
-            .body(Body::empty())
-            .map(FileResponse::Separate)
-            .map_err(io::Error::other);
-    }
-    #[cfg(windows)]
-    if let Some(socket) = &job.socket
-        && let Some(slot) = crate::transmitfile::reserve()
-    {
-        return response
-            .extension(slot.body(socket.clone(), file, len))
+            .extension(http_kit::FileRegion::new(file, 0, len))
             .body(Body::empty())
             .map(FileResponse::Separate)
             .map_err(io::Error::other);
@@ -286,16 +271,4 @@ fn read_inline(file: &mut File, len: u64) -> io::Result<Bytes> {
     let mut data = vec![0; len as usize];
     file.read_exact(&mut data)?;
     Ok(Bytes::from(data))
-}
-
-#[cfg(target_os = "linux")]
-fn direct_body(
-    socket: Arc<tokio::net::tcp::OwnedWriteHalf>,
-    file: impl std::borrow::Borrow<File> + Send + 'static,
-    len: u64,
-) -> hyper::ext::Http1DirectBody {
-    hyper::ext::Http1DirectBody::new(len, async move {
-        crate::sendfile::transfer(socket, file, len, 1024 * 1024).await?;
-        Ok(len)
-    })
 }

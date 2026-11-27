@@ -10,7 +10,6 @@ use {
         sync::Mutex,
         time::SystemTime,
     },
-    tokio::net::tcp::OwnedWriteHalf,
 };
 
 pub struct AssetCache {
@@ -144,12 +143,7 @@ impl Asset {
         })
     }
 
-    pub(super) fn response(
-        &self,
-        head: bool,
-        conditions: &StaticConditions,
-        socket: Arc<OwnedWriteHalf>,
-    ) -> Response {
+    pub(super) fn response(&self, head: bool, conditions: &StaticConditions) -> Response {
         let etag = self.headers.get(header::ETAG);
         if let Some(status) = static_precondition(conditions, self.modified, etag) {
             return static_condition_response(
@@ -164,9 +158,9 @@ impl Asset {
             match &self.content {
                 Content::Inline(bytes) => *response.body_mut() = Body::from(bytes.clone()),
                 Content::File(file, len) => {
-                    response.extensions_mut().insert(super::direct_body(
-                        socket,
+                    response.extensions_mut().insert(http_kit::FileRegion::new(
                         file.clone(),
+                        0,
                         *len,
                     ));
                 }

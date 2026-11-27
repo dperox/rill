@@ -1,18 +1,16 @@
 mod access_log;
 mod edge;
+mod kit_static;
 mod migration;
-#[cfg(any(windows, target_os = "linux"))]
-mod plain;
+
 mod policy;
 mod reload;
 mod routing;
-#[cfg(target_os = "linux")]
-mod sendfile;
+
 mod sites;
 mod static_io;
 mod streams;
-#[cfg(windows)]
-mod transmitfile;
+
 mod upstream;
 mod websocket;
 use axum::serve::ListenerExt;
@@ -258,7 +256,7 @@ fn runtime(check: bool) -> io::Result<()> {
         .enable_all()
         .max_blocking_threads(blocking_threads)
         .build()?
-        .block_on(run(check))
+        .block_on(tokio::task::LocalSet::new().run_until(run(check)))
 }
 
 enum Target {
@@ -295,6 +293,14 @@ async fn run(check: bool) -> io::Result<()> {
                 error_page(StatusCode::BAD_REQUEST)
             } else {
                 match target {
+                    Target::Proxy(_)
+                        if req
+                            .extensions()
+                            .get::<kit_static::StaticRequest>()
+                            .is_some() =>
+                    {
+                        error_page(StatusCode::NOT_FOUND)
+                    }
                     Target::Proxy(pool) => proxy(pool, req).await,
                     Target::Static(site) => {
                         static_io::serve_static(
@@ -315,7 +321,6 @@ async fn run(check: bool) -> io::Result<()> {
     let app = live.borrow().policies.apply(app, live.clone());
     let (app, logging) = access_log::configure(app)?;
     let requires_client_addr = logging || live.borrow().policies.requires_client_addr();
-    #[cfg(any(windows, target_os = "linux"))]
     let compression = live.borrow().policies.compression_enabled();
     let address = env::var("LISTEN").unwrap_or_else(|_| {
         format!(
@@ -329,9 +334,13 @@ async fn run(check: bool) -> io::Result<()> {
         Err(env::VarError::NotPresent) => cfg!(target_os = "linux"),
         _ => return Err(io::Error::other("RILL_SENDFILE must be 0 or 1")),
     };
+    let static_addr = env::var("RILL_STATIC_LISTEN").ok();
     let streams = streams::configured()?;
     if check {
-        for addr in std::iter::once(&address).chain(tls_address.as_ref()) {
+        for addr in std::iter::once(&address)
+            .chain(tls_address.as_ref())
+            .chain(static_addr.as_ref())
+        {
             if tokio::net::lookup_host(addr).await?.next().is_none() {
                 return Err(io::Error::other("listener address did not resolve"));
             }
@@ -349,13 +358,15 @@ async fn run(check: bool) -> io::Result<()> {
         let secure = app.clone();
         jobs.spawn(async move { edge::serve(&address, secure, live).await });
     }
+    if let Some(addr) = static_addr {
+        let static_listener = TcpListener::bind(addr).await?;
+        jobs.spawn_local(kit_static::serve(
+            static_listener,
+            app.clone(),
+            enable_sendfile && !compression,
+        ));
+    }
     jobs.spawn(async move {
-        #[cfg(any(windows, target_os = "linux"))]
-        if enable_sendfile && !compression {
-            return plain::serve(listener, app, requires_client_addr).await;
-        }
-        #[cfg(not(any(windows, target_os = "linux")))]
-        let _ = enable_sendfile;
         let listener = listener.tap_io(|stream| {
             if let Err(error) = stream.set_nodelay(true) {
                 eprintln!("could not set TCP_NODELAY on client socket: {error}");
