@@ -29,9 +29,6 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    outputs:
-      digest_amd64: ${{ steps.push.outputs.digest_amd64 }}
-      digest_arm64: ${{ steps.push.outputs.digest_arm64 }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -46,7 +43,6 @@ jobs:
             exit 1
           fi
       - name: Build and push native image
-        id: push
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARCH: ${{ matrix.arch }}
@@ -57,8 +53,14 @@ jobs:
           docker run --rm "$tag" config test
           printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker push "$tag"
-          digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$tag")
-          echo "digest_$ARCH=$digest" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/digests"
+          docker inspect --format='{{index .RepoDigests 0}}' "$tag" > "$RUNNER_TEMP/digests/$ARCH.txt"
+      - name: Upload image digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: rill-image-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/${{ matrix.arch }}.txt
+          if-no-files-found: error
 
   manifest:
     needs: build
@@ -67,15 +69,22 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - name: Download image digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rill-image-digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
       - name: Publish multi-platform tag
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DIGEST_AMD64: ${{ needs.build.outputs.digest_amd64 }}
-          DIGEST_ARM64: ${{ needs.build.outputs.digest_arm64 }}
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          digest_amd64=$(<"$RUNNER_TEMP/digests/amd64.txt")
+          digest_arm64=$(<"$RUNNER_TEMP/digests/arm64.txt")
+          [[ -n "$digest_amd64" && -n "$digest_arm64" ]]
           tag="$IMAGE:${GITHUB_REF_NAME#v}"
           printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker buildx imagetools create -t "$tag" "$DIGEST_AMD64" "$DIGEST_ARM64"
+          docker buildx imagetools create -t "$tag" "$digest_amd64" "$digest_arm64"
           docker buildx imagetools inspect "$tag"

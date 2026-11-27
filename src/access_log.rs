@@ -62,8 +62,24 @@ fn writer() -> &'static SyncSender<LogMessage> {
 pub fn flush() {
     if let Some(log) = WRITER.get() {
         let (tx, rx) = mpsc::sync_channel(1);
-        if log.sender.send(LogMessage::Flush(tx)).is_ok() {
-            let _ = rx.recv_timeout(std::time::Duration::from_millis(500));
+        let deadline = Instant::now() + std::time::Duration::from_millis(500);
+        let mut msg = LogMessage::Flush(tx);
+        loop {
+            match log.sender.try_send(msg) {
+                Ok(()) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    let _ = rx.recv_timeout(remaining);
+                    break;
+                }
+                Err(mpsc::TrySendError::Full(returned)) => {
+                    if Instant::now() >= deadline {
+                        break;
+                    }
+                    msg = returned;
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(mpsc::TrySendError::Disconnected(_)) => break,
+            }
         }
     }
 }

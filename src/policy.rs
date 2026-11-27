@@ -348,11 +348,14 @@ impl Policies {
                         Err(_) => {
                             fill = None;
                             permit = None;
-                            body.frame().await
+                            continue;
                         }
                     }
                 } else {
-                    body.frame().await
+                    tokio::select! {
+                        _ = tx.closed() => break,
+                        frame = body.frame() => frame,
+                    }
                 };
                 let Some(frame) = next else {
                     break;
