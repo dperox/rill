@@ -101,9 +101,9 @@ def main():
     rill = [str(Path(os.getenv("RILL", ROOT / "target/debug/rill")).resolve())]
     with TemporaryDirectory() as directory, socket.socket() as refused:
         state = Path(directory)
-        # Keep the port reserved without calling listen, so TCP connections are refused.
-        refused.bind((HOST, 0))
         with ThreadingHTTPServer((HOST, 0), HealthyBackend) as healthy:
+            # A connected client's local port stays reserved and refuses new connections.
+            refused.connect(healthy.server_address)
             healthy.requests = Queue()
             worker = Thread(target=healthy.serve_forever, daemon=True)
             worker.start()

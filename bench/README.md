@@ -8,6 +8,8 @@ Use [compare.py](compare.py) for throughput, p95 latency and peak front-end RSS,
 and [connections.py](connections.py) for idle persistent connections. The
 [Linux sendfile report](sendfile.md) covers the immutable asset cache, sendfile, and TCP socket settings.
 
+The [macOS benchmark](macos.md) compares native Rill with the same workloads through an Apple container’s published port.
+
 The [Windows and WSL2 baseline](windows.md) compares native loopback workloads on the same machine.
 
 ## Throughput and latency

@@ -1,5 +1,33 @@
 # Deploy Rill
 
+## macOS
+
+Download the archive and matching `.sha256` file for your Mac from the same release. Choose `macos-arm64` for Apple silicon or `macos-amd64` for Intel. The v0.1.1 binaries target macOS 15 and later. They ship as command-line archives with the sample site and licenses, without Developer ID notarization. [Release downloads](https://github.com/dperox/rill/releases/tag/v0.1.1)
+
+For example, with the Apple silicon v0.1.1 files in the current directory:
+
+```sh
+shasum -a 256 -c rill-0.1.1-macos-arm64.tar.gz.sha256
+tar -xzf rill-0.1.1-macos-arm64.tar.gz
+cd rill
+./rill config test
+LISTEN=127.0.0.1:8080 ./rill
+```
+
+From another terminal, run `curl --fail http://127.0.0.1:8080/` to retrieve the sample site. To build from a source checkout, run `cargo build --release --locked` and use `target/release/rill`. Native macOS serves static files with buffered reads and supports SIGHUP reloads. [Reload procedure](reload.md)
+
+### Apple containers
+
+On an Apple silicon Mac with Apple’s `container` installed, run the published Linux ARM64 image in a lightweight VM. Docker Desktop on Apple silicon selects the same image. The versioned image index also includes Linux AMD64 for x86-64 hosts. [Apple container requirements](https://github.com/apple/container#requirements)
+
+```sh
+container system start
+container run --rm ghcr.io/dperox/rill:0.1.1 config test
+container run --rm -p 127.0.0.1:8080:8080 ghcr.io/dperox/rill:0.1.1
+```
+
+Use the same curl request from the Mac. To build the image from a checkout, run `container build -f deploy/Dockerfile -t rill:local .` and use `rill:local` in those commands. A read-only site mount uses `-v "$PWD/site:/app/public:ro"`. For HTTP/3, configure TLS and publish the TLS port over both TCP and UDP. The macOS 27.2.1 check with Apple container 1.2.0 verified HTTP/1.1, HTTP/2, HTTP/3, and full and range reads from a mounted site. [TLS settings](edge.md) · [Mac benchmarks](../bench/macos.md)
+
 ## Native Windows
 
 The x86-64 Windows GNU release at `7082e92` was cross-compiled on Linux and exercised on Windows 11 Pro. Build it from Linux with the GNU MinGW-w64 x86-64 C compiler and linker installed:

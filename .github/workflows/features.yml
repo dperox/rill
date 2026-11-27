@@ -6,12 +6,19 @@ permissions:
 
 jobs:
   acceptance:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Select OpenSSL on macOS
+        if: runner.os == 'macOS'
+        run: echo "$(brew --prefix openssl@3)/bin" >> "$GITHUB_PATH"
       - name: Check Rust
         run: |
           rustup update stable --no-self-update
@@ -22,5 +29,22 @@ jobs:
           cargo test --locked
       - name: Run feature acceptance checks
         run: ./checks/features.sh
-      - name: Check upstream behavior and cache invalidation
-        run: python3 checks/upstreams.py
+      - name: Check upstream behavior, cache invalidation and peer policies
+        run: |
+          python3 checks/upstreams.py
+          python3 checks/proxy_failure.py
+          python3 checks/policy.py
+      - name: Smoke-test the macOS release archive
+        if: runner.os == 'macOS'
+        run: |
+          case "$(uname -m)" in
+            arm64) arch=arm64 ;;
+            x86_64) arch=amd64 ;;
+            *) exit 1 ;;
+          esac
+          ./deploy/package-macos.sh "$arch" "$RUNNER_TEMP/dist"
+          cd "$RUNNER_TEMP/dist"
+          shasum -a 256 -c *.sha256
+          tar -xzf *.tar.gz
+          cd rill
+          ./rill config test

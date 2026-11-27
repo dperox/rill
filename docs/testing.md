@@ -1,6 +1,6 @@
 # Testing Rill
 
-Run these commands from the repository root on Linux or macOS. Use stable Rust, Cargo, a C toolchain, Python 3.11 or newer, and an OpenSSL CLI that supports `req -addext`. CI runs on Linux. The HTTP/3 check has additional client dependencies listed in the [TLS guide](edge.md#local-protocol-check).
+Run these commands from the repository root on Linux or macOS. Use stable Rust, Cargo, a C toolchain, Python 3.11 or newer, and an OpenSSL CLI that supports `req -addext`. CI runs on Linux and on Apple silicon and Intel macOS runners. The macOS jobs also package and preflight the release archive. The HTTP/3 check has additional client dependencies listed in the [TLS guide](edge.md#local-protocol-check).
 
 ```sh
 cargo fmt --check
