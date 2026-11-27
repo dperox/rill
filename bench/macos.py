@@ -28,11 +28,65 @@ def sample(wrk, script, port, path, seconds):
     return rate, f"{float(p95_us) / 1000:.3f}", checked
 
 
+def nginx_config(listen, upstream, document_root):
+    return f"""
+daemon off;
+master_process off;
+worker_processes 1;
+pid nginx.pid;
+error_log stderr warn;
+events {{ worker_connections 1024; }}
+http {{
+    access_log off;
+    sendfile on;
+    tcp_nodelay on;
+    client_body_temp_path client_temp;
+    proxy_temp_path proxy_temp;
+    fastcgi_temp_path fastcgi_temp;
+    uwsgi_temp_path uwsgi_temp;
+    scgi_temp_path scgi_temp;
+    upstream origin {{ server {upstream}; keepalive 128; }}
+    server {{
+        listen {listen};
+        root "{document_root}";
+        location /api/ {{
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_pass http://origin;
+        }}
+    }}
+}}
+"""
+
+
+def start_container(running, site, image, port, frontend):
+    name = f"rill-bench-{uuid4().hex[:10]}"
+    # Read warm guest files and proxy over guest loopback for both servers.
+    startup = """
+set -eu
+cp -R /fixtures /tmp/site
+LISTEN=127.0.0.1:9000 DOCUMENT_ROOT=/tmp/site/origin rill &
+"""
+    if frontend == "nginx":
+        startup += 'exec nginx -p /tmp/ -c /tmp/site/nginx.conf -e stderr'
+    else:
+        startup += 'export UPSTREAMS=127.0.0.1:9000 DOCUMENT_ROOT=/tmp/site/front; exec rill'
+    subprocess.run(
+        ["container", "run", "-d", "--rm", "--name", name, "--cpus", "2", "--memory", "1G",
+         "-p", f"127.0.0.1:{port}:8080", "-v", f"{site}:/fixtures:ro",
+         "-e", "LISTEN=0.0.0.0:8080", "-e", "TOKIO_WORKER_THREADS=1", "-e", "RILL_BLOCKING_THREADS=1",
+         "--entrypoint", "/bin/sh", image, "-c", startup],
+        check=True, stdout=sys.stderr,
+    )
+    running.callback(subprocess.run, ["container", "stop", name], check=True, stdout=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rill", type=Path, default=REPO / "target/release/rill")
     parser.add_argument("--image", default="rill:local")
     parser.add_argument("--wrk", default="wrk")
+    parser.add_argument("--nginx", help="also benchmark this native NGINX binary; --image must contain nginx and rill")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory() as directory, ExitStack() as running:
         root = Path(directory)
@@ -47,10 +101,10 @@ def main():
             (root / f"{size}.lua").write_text(validation_script(size))
 
         with ExitStack() as reservations:
-            sockets = [reservations.enter_context(socket.socket()) for _ in range(3)]
+            sockets = [reservations.enter_context(socket.socket()) for _ in range(5)]
             for sock in sockets:
                 sock.bind(("127.0.0.1", 0))
-            native, origin, published = [sock.getsockname()[1] for sock in sockets]
+            native, origin, published, native_nginx, published_nginx = [sock.getsockname()[1] for sock in sockets]
 
         workers = {"TOKIO_WORKER_THREADS": "1", "RILL_BLOCKING_THREADS": "1"}
         for port, folder, settings in [(origin, "origin", {}), (native, "front", {"UPSTREAMS": f"127.0.0.1:{origin}"})]:
@@ -60,26 +114,18 @@ def main():
                          DOCUMENT_ROOT=str(site / folder), **workers, **settings),
             ))
 
-        name = f"rill-bench-{uuid4().hex[:10]}"
-        # Keep the measured files and the backend inside the guest during the run.
-        startup = """
-set -eu
-cp -R /fixtures /tmp/site
-LISTEN=127.0.0.1:9000 DOCUMENT_ROOT=/tmp/site/origin rill &
-export UPSTREAMS=127.0.0.1:9000 DOCUMENT_ROOT=/tmp/site/front
-exec rill
-"""
-        subprocess.run(
-            ["container", "run", "-d", "--rm", "--name", name, "--cpus", "2", "--memory", "1G",
-             "-p", f"127.0.0.1:{published}:8080", "-v", f"{site}:/fixtures:ro",
-             "-e", "TOKIO_WORKER_THREADS=1", "-e", "RILL_BLOCKING_THREADS=1",
-             "--entrypoint", "/bin/sh", args.image, "-c", startup],
-            check=True, stdout=sys.stderr,
-        )
-        running.callback(subprocess.run, ["container", "stop", name], check=True, stdout=sys.stderr)
+        start_container(running, site, args.image, published, "rill")
+        servers = [("native", native), ("apple-container", published)]
+        if args.nginx:
+            config = root / "nginx.conf"
+            config.write_text(nginx_config(f"127.0.0.1:{native_nginx}", f"127.0.0.1:{origin}", site / "front"))
+            running.enter_context(process([args.nginx, "-p", f"{root}/", "-c", str(config), "-e", "stderr"]))
+            (site / "nginx.conf").write_text(nginx_config("0.0.0.0:8080", "127.0.0.1:9000", "/tmp/site/front"))
+            start_container(running, site, args.image, published_nginx, "nginx")
+            servers = [("rill-native", native), ("nginx-native", native_nginx),
+                       ("rill-container", published), ("nginx-container", published_nginx)]
         writer = csv.writer(sys.stdout, lineterminator="\n")
         writer.writerow(["workload", "bytes", "server", "round", "requests_per_s", "p95_ms", "checked"])
-        servers = [("native", native), ("apple-container", published)]
         for size in sizes:
             script = root / f"{size}.lua"
             for workload, path in [("static", f"/{size}.bin"), ("proxy", f"/api/{size}.bin?bench=1")]:

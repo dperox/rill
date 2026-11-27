@@ -1,0 +1,5 @@
+FROM ghcr.io/dperox/rill:0.1.1 AS rill
+FROM nginx:1.31.10
+COPY --from=rill /usr/local/bin/rill /usr/local/bin/rill
+ENV LISTEN=0.0.0.0:8080
+USER 10001:10001
