@@ -22,3 +22,15 @@ Release build on the same Windows 11 Pro host, based on `3b8d34a`. The frontend 
 | 64 | 7,030 | 7,945 | +13.0% | 9.920 | 11.619 |
 
 Each value is the median of three rounds. At 64 clients, enabled p95 ranged from 8.165 to 27.752 ms. Enabled mode uses the direct-write listener and at most two TransmitFile slots; simultaneous requests above that cap use buffered reads. The measurements compare these complete modes. The executable SHA-256 was `b2e85f448f3567ea63c8fa7aa9857879fd7a31f48121de0bfd8a593c83de06e4`. [Individual rounds](windows-transmitfile.csv)
+
+## Windows TransmitFile and WSL2 sendfile
+
+The WSL2 release build at `13b0380` served a warm 256 KiB file from ext4 with Linux sendfile enabled. The Windows figures come from the TransmitFile experiment above. Both runs used the same host, CPU assignments, client source, connection counts and timing. Each client used its own OS's loopback interface and verified every response body.
+
+| Concurrent clients | Windows req/s | WSL2 req/s | Windows p95 ms | WSL2 p95 ms |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 8,723 | 7,297 | 0.121 | 0.171 |
+| 2 | 8,255 | 10,723 | 0.336 | 0.257 |
+| 64 | 7,945 | 13,970 | 11.619 | 5.568 |
+
+Windows had higher median throughput with one client. WSL2 had higher throughput and lower p95 latency at two and 64 clients. At 64 clients, enabling TransmitFile raised Windows throughput from 50% to 57% of the WSL2 median. [Windows rounds](windows-transmitfile.csv) and [WSL2 rounds](wsl2-sendfile.csv).
