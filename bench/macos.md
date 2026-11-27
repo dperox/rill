@@ -19,6 +19,8 @@ The container had two vCPUs and 1 GiB of memory. macOS scheduled the host proces
 
 All 6,182,752 measured responses had status 200 and matched the expected body byte-for-byte. The published-port results include the Mac-to-VM networking path. These are end-to-end local HTTP measurements on one machine. [Per-round throughput, latency, and verified response counts](macos-rounds.csv)
 
+The [fixed-upstream comparison](fixed-upstream.md) measures the opt-in single-peer GET path against the PR #3 baseline and NGINX with the same workloads.
+
 ## Rill and NGINX on the same Mac
 
 A second run interleaved Rill 0.1.1 and NGINX 1.31.10 on the same M4 Mac. Each row compares the two servers within one deployment. Throughput and p95 latency are medians of three rounds. The percentage is the change in throughput from NGINX to Rill.
