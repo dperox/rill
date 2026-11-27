@@ -17,6 +17,10 @@ invalid = 0
 static_count = 0
 api_count = 0
 download_count = 0
+local error_codes = {404, 500, 502, 503, 504}
+for _, code in ipairs(error_codes) do
+    _G["status_" .. code] = 0
+end
 
 function setup(thread)
     threads[#threads + 1] = thread
@@ -45,6 +49,8 @@ function response(status, headers, body)
     local kind = expected[body]
     if status ~= 200 or not kind then
         invalid = invalid + 1
+        local key = "status_" .. status
+        if _G[key] then _G[key] = _G[key] + 1 end
     elseif kind == "static" then
         static_count = static_count + 1
     elseif kind == "api" then
@@ -59,6 +65,15 @@ function done(summary, latency)
     for _, thread in ipairs(threads) do
         for field, _ in pairs(counts) do
             counts[field] = counts[field] + thread:get(field)
+        end
+    end
+    if counts.invalid > 0 then
+        for _, code in ipairs(error_codes) do
+            local total = 0
+            for _, thread in ipairs(threads) do
+                total = total + thread:get("status_" .. code)
+            end
+            if total > 0 then print(string.format("HTTP %d: %d", code, total)) end
         end
     end
     local errors = summary.errors

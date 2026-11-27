@@ -1,0 +1,5 @@
+server,profile,connections,round,requests,elapsed_s,requests_per_s,p95_ms,p99_ms,checked,invalid,static,api,download,connect_errors,read_errors,write_errors,timeouts,status_errors,rollout_s
+rill,mixed,64,1,1061165,45.041,23559.81,5.306,7.237,1061165,0,742820,212233,106112,0,0,0,0,0,9.292
+nginx,mixed,64,1,391562,45.080,8685.97,4.618,6.160,391562,1097,273309,78107,39049,0,0,0,64,1097,9.106
+rill,mixed,64,2,1068560,45.040,23724.88,5.209,7.125,1068560,0,747995,213713,106852,0,0,0,0,0,9.006
+nginx,mixed,64,2,400403,45.075,8882.99,5.046,6.772,400403,1453,279292,79760,39898,0,0,0,0,1453,11.796

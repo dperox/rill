@@ -23,6 +23,7 @@ def main():
     parser.add_argument("--seconds", type=int, default=30)
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--rounds", type=int, default=3)
+    parser.add_argument("--compare-nginx", action="store_true", help="alternate Rill and NGINX through the same ingress")
     parser.add_argument("--rollout", action="store_true")
     args = parser.parse_args()
     if min(args.seconds, args.warmup, args.rounds) < 1:
@@ -34,19 +35,22 @@ def main():
         if not env.get("KUBECONFIG") or context != "kind-rill-benchmark":
             parser.error("--rollout requires the isolated kind-rill-benchmark kubeconfig")
 
-    def run(profile, connections, seconds, *, rollout=False):
+    def run(server, profile, connections, seconds, *, rollout=False):
         cmd = ["taskset", "-c", args.cpus, args.wrk, f"-t{threads}", f"-c{connections}",
                f"-d{seconds}s", "--timeout", "5s", "-s", str(HERE / "mixed.lua"),
-               "https://rill-bench:18443", "--", profile]
+               f"https://{server}-bench:18443", "--", profile]
         start = time.monotonic()
         with subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT, text=True) as load:
             if rollout:
                 time.sleep(8)
                 kubectl = ["kubectl", "-n", "rill-bench", "rollout"]
-                subprocess.run([*kubectl, "restart", "deploy/rill"], check=True)
-                subprocess.run([*kubectl, "status", "deploy/rill", "--timeout=40s"], check=True)
-                print(f"Rollout ready {time.monotonic() - start:.1f}s after load started", flush=True)
+                restart = time.monotonic()
+                subprocess.run([*kubectl, "restart", f"deploy/{server}"], check=True)
+                subprocess.run([*kubectl, "status", f"deploy/{server}", "--timeout=40s"], check=True)
+                rollout_elapsed = time.monotonic() - restart
+                print(f"{server} rollout complete in {rollout_elapsed:.1f}s, "
+                      f"{time.monotonic() - start:.1f}s after load started", flush=True)
                 if load.poll() is not None:
                     raise RuntimeError("load ended before rollout completed")
             output, _ = load.communicate(timeout=seconds + 15)
@@ -67,20 +71,33 @@ def main():
                         raise RuntimeError(f"unexpected mix for {route}")
             elif int(row[profile]) != requests:
                 raise RuntimeError(f"unexpected response body for {profile}")
+        if rollout and args.compare_nginx:
+            row["rollout_s"] = f"{rollout_elapsed:.3f}"
         return row
 
     profiles = (("mixed", 64),) if args.rollout else PROFILES
-    path = args.state / ("rollout.csv" if args.rollout else "rounds.csv")
-    with path.open("w", newline="") as file:
-        rows = csv.DictWriter(file, ("profile", "connections", "round", *FIELDS), lineterminator="\n")
+    filename = "rollout.csv" if args.rollout else "rounds.csv"
+    servers = ("rill", "nginx") if args.compare_nginx else ("rill",)
+    fields = ("profile", "connections", "round", *FIELDS)
+    if args.compare_nginx:
+        filename = "comparison-" + filename
+        fields = ("server", *fields)
+        if args.rollout:
+            fields = (*fields, "rollout_s")
+    with (args.state / filename).open("w", newline="") as file:
+        rows = csv.DictWriter(file, fields, lineterminator="\n")
         rows.writeheader()
         for profile, connections in profiles:
             for round_number in range(1, (1 if args.rollout else args.rounds) + 1):
-                print(f"{profile}, {connections} connections, round {round_number}", flush=True)
-                run(profile, connections, args.warmup)
-                result = run(profile, connections, args.seconds, rollout=args.rollout)
-                rows.writerow(dict(profile=profile, connections=connections, round=round_number, **result))
-                file.flush()
+                order = servers if round_number % 2 else servers[::-1]
+                for server in order:
+                    print(f"{server}, {profile}, {connections} connections, round {round_number}", flush=True)
+                    run(server, profile, connections, args.warmup)
+                    result = run(server, profile, connections, args.seconds, rollout=args.rollout)
+                    if args.compare_nginx:
+                        result["server"] = server
+                    rows.writerow(dict(profile=profile, connections=connections, round=round_number, **result))
+                    file.flush()
 
 
 if __name__ == "__main__":

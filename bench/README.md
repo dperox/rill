@@ -2,7 +2,7 @@
 
 [Compare Rill and NGINX on static files and reverse proxy traffic.](http-kit-static.md)
 
-[Run the multi-node Kubernetes HTTPS benchmark.](kubernetes/README.md)
+[Compare Rill and NGINX through Kubernetes HTTPS ingress.](kubernetes/README.md)
 
 Use [compare.py](compare.py) for throughput, p95 latency and peak front-end RSS,
 and [connections.py](connections.py) for idle persistent connections. The
