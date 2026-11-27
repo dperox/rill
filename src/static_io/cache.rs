@@ -2,8 +2,8 @@ use std::{env, io, sync::Arc};
 
 #[cfg(target_os = "linux")]
 use {
+    super::response::{StaticConditions, static_condition_response, static_precondition},
     super::{Body, Bytes, File, INLINE_LIMIT, Response, header, read_inline},
-    crate::{StaticConditions, static_condition_response, static_precondition},
     std::{
         collections::{HashMap, VecDeque},
         ffi::{OsStr, OsString},

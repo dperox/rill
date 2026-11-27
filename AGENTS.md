@@ -6,6 +6,7 @@ Start with the [feature guide](docs/features.md) for a change in observable beha
 
 ## Repo skills
 
+- [Rust feature development](.agents/skills/rust-feature-development/SKILL.md) for module ownership and verification.
 - [Develop a Rill feature](.agents/skills/rill-feature/SKILL.md) for defining an operator-visible outcome, selecting the relevant entry point, and checking it end to end.
 - [Maintain Rill transports](.agents/skills/rill-transport/SKILL.md) for work on upgrades, connection lifetime, buffering, sendfile, and the pinned Hyper fork.
 - [Create a Rust repository skill](.agents/skills/rust-repo-skill-creator/SKILL.md) for documenting repeatable development workflows.
