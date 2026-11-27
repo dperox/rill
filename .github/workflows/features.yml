@@ -46,6 +46,14 @@ jobs:
           python3 checks/mixed_io.py
           python3 checks/streams.py target/debug/rill
           python3 checks/security.py
+      - name: Check opt-in fixed upstreams through reloads and middleware
+        env:
+          RILL_FIXED_UPSTREAM: "1"
+        run: |
+          python3 checks/reload.py
+          python3 checks/policy.py
+          python3 checks/websocket.py
+          python3 checks/proxy_streaming.py
       - name: Check Linux sendfile and asset cache
         if: runner.os == 'Linux'
         run: |

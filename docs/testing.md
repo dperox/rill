@@ -40,6 +40,8 @@ RILL_SENDFILE=1 python3 checks/compare.py
 RILL_SENDFILE=0 python3 checks/compare.py
 ```
 
+For the opt-in single-upstream transport, set `RILL_FIXED_UPSTREAM=1` when running the policy, reload, WebSocket and proxy streaming checks. The upstream suite also exercises connection reuse, retirement and backend disconnects.
+
 ## Run the socket checks
 
 ```sh

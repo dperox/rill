@@ -59,6 +59,7 @@ server {{
         env = dict(os.environ, DOCUMENT_ROOT=tmp, RILL_CONFIG=str(path), **candidate["environment"])
         assert run(["config", "test"], 0, env=env)["status"] == "valid"
         assert run(["config", "test"], 1, env=dict(env, RILL_STREAM_BALANCE="bad"))["status"] == "invalid"
+        assert run(["config", "test"], 1, env=dict(env, RILL_FIXED_UPSTREAM="bad"))["status"] == "invalid"
         path.write_text('{"unknown":1}')
         assert run(["config", "test"], 1, env=env)["status"] == "invalid"
         print("Migration source locations, candidate, exit codes and preflight on an occupied port passed.")
