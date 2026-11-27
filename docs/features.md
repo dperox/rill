@@ -2,12 +2,13 @@
 
 Describe a feature in terms of what a client or operator can do. A proposal can start as a [feature request](../.github/ISSUE_TEMPLATE/feature.md). Include one example of success and one failure the implementation must handle. Deliver one independently testable behavior at a time.
 
-On Linux or WSL, `./checks/features.sh` exercises reloads, WebSockets, per-host static roots access logs, redirects, certificate selection, and upstream failover. The table lists the separate checks for other capabilities. Build prerequisites and invocation details are in the [test guide](testing.md).
+On Linux or WSL, `./checks/features.sh` exercises reloads, WebSockets, configuration migration and validation, per-host static roots, access logs, redirects, certificate selection, and upstream failover. The table lists the separate checks for other capabilities. Build prerequisites and invocation details are in the [test guide](testing.md).
 
 ## Acceptance contracts
 
 | Feature | Observable behavior | Acceptance check |
 | --- | --- | --- |
+| [Configuration migration and validation](migration.md) | An operator or agent can inspect an NGINX dump and validate a Rill deployment configuration without starting the service. | [CLI contract](../checks/migration.py) |
 | [Static HTTP responses](static-io.md) | Clients receive directory indexes, GET and HEAD responses, byte ranges, validators and conditional responses. | [Recorded HTTP cases](../checks/compare.py), [header and size checks](../checks/static_sizes.py), [live file replacement](../checks/static_updates.py) |
 | [Linux sendfile and immutable assets](static-io.md#linux-sendfile) | Large plaintext downloads can use sendfile. Fingerprinted assets can reuse bytes or an open descriptor across requests. | [Sendfile](../checks/sendfile.py), [asset cache](../checks/asset_cache.py), [mixed traffic](../checks/mixed_io.py) |
 | [HTTP routing and balancing](routing.md) | Host and path select an upstream pool. Round robin or least connections selects a peer, and Rill streams the response. A refused connection returns 502. | [Routing](../checks/routing.py), [streaming](../checks/proxy_streaming.py), [upstream failure](../checks/proxy_failure.py) |

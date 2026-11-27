@@ -104,7 +104,13 @@ impl BoundListener {
     }
 }
 
-pub(crate) async fn bind_from_env() -> io::Result<Vec<BoundListener>> {
+pub(crate) struct ListenerConfig {
+    tcp: bool,
+    address: SocketAddr,
+    pool: Arc<Pool>,
+}
+
+pub(crate) fn configured() -> io::Result<Vec<ListenerConfig>> {
     let balance = match env_setting("RILL_STREAM_BALANCE")?.as_deref() {
         None | Some("round_robin") => Balance::RoundRobin,
         Some("least_connections") => Balance::LeastConnections,
@@ -122,17 +128,26 @@ pub(crate) async fn bind_from_env() -> io::Result<Vec<BoundListener>> {
                 .split(',')
                 .map(|upstream| parse_address(name, upstream))
                 .collect::<io::Result<Vec<_>>>()?;
-            let transport = if tcp {
-                TcpListener::bind(address).await.map(Transport::Tcp)
-            } else {
-                UdpSocket::bind(address).await.map(Transport::Udp)
-            }
-            .map_err(|err| io::Error::new(err.kind(), format!("{name}: bind {address}: {err}")))?;
-            listeners.push(BoundListener {
-                transport,
+            listeners.push(ListenerConfig {
+                tcp,
+                address,
                 pool: Pool::new(upstreams, balance),
             });
         }
+    }
+    Ok(listeners)
+}
+
+pub(crate) async fn bind(config: Vec<ListenerConfig>) -> io::Result<Vec<BoundListener>> {
+    let mut listeners = Vec::new();
+    for ListenerConfig { tcp, address, pool } in config {
+        let transport = if tcp {
+            TcpListener::bind(address).await.map(Transport::Tcp)
+        } else {
+            UdpSocket::bind(address).await.map(Transport::Udp)
+        }
+        .map_err(|e| io::Error::new(e.kind(), format!("bind {address}: {e}")))?;
+        listeners.push(BoundListener { transport, pool });
     }
     Ok(listeners)
 }

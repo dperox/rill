@@ -44,6 +44,10 @@ UPSTREAMS=127.0.0.1:9001 ./target/release/rill
 
 A request for `/api/products?limit=5` reaches the backend with that path and query and `Host: backend`. Other paths still serve the document root. Add comma-separated upstreams for round-robin balancing, or use `RILL_ROUTES` for host and path-prefix rules. HTTP/1.1 WebSocket upgrades use the same routes. HTTPS and mutual TLS upstreams and active health checks are optional. [Routing examples](docs/routing.md)
 
+## Migrating from NGINX
+
+Run `rill migrate nginx` on the stdout of `nginx -T` for a JSON candidate and source-located diagnostics. Run `rill config test` with the intended deployment environment to validate the Rill configuration before opening listeners. [Migration commands and agent contract](docs/migration.md)
+
 ## Configuration
 
 | Task | Settings and guide |

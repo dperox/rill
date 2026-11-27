@@ -44,7 +44,11 @@ pub fn from_env() -> io::Result<Vec<Definition>> {
     Ok(definitions)
 }
 
-pub fn load(definitions: Vec<Definition>, policy: &policy::Policies) -> io::Result<Vec<Route>> {
+pub fn load(
+    definitions: Vec<Definition>,
+    policy: &policy::Policies,
+    start_probes: bool,
+) -> io::Result<Vec<Route>> {
     let least = match env::var("RILL_HTTP_BALANCE").as_deref() {
         Ok("round_robin") | Err(env::VarError::NotPresent) => false,
         Ok("least_connections") => true,
@@ -100,7 +104,7 @@ pub fn load(definitions: Vec<Definition>, policy: &policy::Policies) -> io::Resu
             }),
         });
     }
-    if let Some(health) = health {
+    if start_probes && let Some(health) = health {
         for route in &mut routes {
             route.probes = health.start(&route.pool);
         }

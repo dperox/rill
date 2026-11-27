@@ -43,6 +43,7 @@ struct Source {
     path: Option<PathBuf>,
     chunk: usize,
     secure: bool,
+    check: bool,
 }
 
 impl Source {
@@ -83,7 +84,7 @@ impl Source {
         };
         // Each generation owns its cache, including fills still running on retired routes.
         let policies = policy::Policies::from_env()?;
-        let routes = routing::load(definitions, &policies)?;
+        let routes = routing::load(definitions, &policies, !self.check)?;
         Ok(Generation {
             sites,
             routes,
@@ -93,7 +94,7 @@ impl Source {
     }
 }
 
-pub fn start(chunk: usize) -> io::Result<(Live, Option<String>)> {
+pub fn start(chunk: usize, check: bool) -> io::Result<(Live, Option<String>)> {
     let address = env::var_os("TLS_LISTEN")
         .map(|s| {
             s.into_string()
@@ -103,8 +104,12 @@ pub fn start(chunk: usize) -> io::Result<(Live, Option<String>)> {
     let source = Arc::new(Source {
         path: env::var_os("RILL_CONFIG").map(PathBuf::from),
         chunk,
+        check,
         secure: address.is_some(),
     });
+    if check {
+        return Ok((watch::channel(source.load()?).1, address));
+    }
     #[cfg(unix)]
     let mut hup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
     let (publisher, live) = watch::channel(source.load()?);

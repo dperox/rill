@@ -1,5 +1,6 @@
 mod access_log;
 mod edge;
+mod migration;
 #[cfg(target_os = "linux")]
 mod plain;
 mod policy;
@@ -205,6 +206,26 @@ async fn proxy(pool: Arc<Pool>, mut req: Request) -> Response {
 }
 
 fn main() -> io::Result<()> {
+    let args: Vec<_> = env::args().skip(1).collect();
+    match args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        [] => runtime(false),
+        ["config", "test"] => migration::validation(runtime(true)),
+        ["migrate", "nginx"] => migration::run("-"),
+        ["migrate", "nginx", path] => migration::run(path),
+        ["--help"] | ["-h"] => {
+            println!("rill | rill config test | rill migrate nginx [DUMP|-]");
+            Ok(())
+        }
+        _ => migration::usage(),
+    }
+}
+
+fn runtime(check: bool) -> io::Result<()> {
     let cpus = std::thread::available_parallelism().map_or(1, |count| count.get());
     let workers = match env::var("TOKIO_WORKER_THREADS") {
         Ok(value) => value
@@ -235,7 +256,7 @@ fn main() -> io::Result<()> {
         .enable_all()
         .max_blocking_threads(blocking_threads)
         .build()?
-        .block_on(run())
+        .block_on(run(check))
 }
 
 enum Target {
@@ -243,11 +264,11 @@ enum Target {
     Static(sites::Site),
 }
 
-async fn run() -> io::Result<()> {
+async fn run(check: bool) -> io::Result<()> {
     let stream_chunk = static_io::stream_chunk_bytes()?;
     let root = PathBuf::from(env::var_os("DOCUMENT_ROOT").unwrap_or_else(|| "public".into()));
     let default_site = sites::Site::open(&root, stream_chunk)?;
-    let (live, tls_address) = reload::start(stream_chunk)?;
+    let (live, tls_address) = reload::start(stream_chunk, check)?;
     let routes = live.clone();
     let app = Router::new().fallback_service(tower::service_fn(move |req: Request| {
         let generation = routes.borrow();
@@ -300,10 +321,24 @@ async fn run() -> io::Result<()> {
             env::var("PORT").unwrap_or_else(|_| "8080".into())
         )
     });
+    let enable_sendfile = match env::var("RILL_SENDFILE").as_deref() {
+        Ok("0") => false,
+        Ok("1") | Err(env::VarError::NotPresent) => true,
+        _ => return Err(io::Error::other("RILL_SENDFILE must be 0 or 1")),
+    };
+    let streams = streams::configured()?;
+    if check {
+        for addr in std::iter::once(&address).chain(tls_address.as_ref()) {
+            if tokio::net::lookup_host(addr).await?.next().is_none() {
+                return Err(io::Error::other("listener address did not resolve"));
+            }
+        }
+        return Ok(());
+    }
     let listener = TcpListener::bind(address).await?;
     eprintln!("Rill listening on http://{}", listener.local_addr()?);
     let mut jobs = tokio::task::JoinSet::new();
-    for service in streams::bind_from_env().await? {
+    for service in streams::bind(streams).await? {
         let task = service.spawn();
         jobs.spawn(async move { task.await.map_err(io::Error::other)? });
     }
@@ -311,11 +346,6 @@ async fn run() -> io::Result<()> {
         let secure = app.clone();
         jobs.spawn(async move { edge::serve(&address, secure, live).await });
     }
-    let enable_sendfile = match env::var("RILL_SENDFILE").as_deref() {
-        Ok("0") => false,
-        Ok("1") | Err(env::VarError::NotPresent) => true,
-        _ => return Err(io::Error::other("RILL_SENDFILE must be 0 or 1")),
-    };
     jobs.spawn(async move {
         #[cfg(target_os = "linux")]
         if enable_sendfile && !compression {
