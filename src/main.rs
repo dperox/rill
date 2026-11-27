@@ -227,26 +227,26 @@ fn main() -> io::Result<()> {
     }
 }
 
+// Linux can give a process two CPUs of time while allowing it to run on many
+// more CPUs. A pinned pair and a quota-limited pod measured differently.
+fn wider_cpu_affinity(cpus: usize) -> bool {
+    let Ok(status) = std::fs::read_to_string("/proc/thread-self/status") else {
+        return false;
+    };
+    let Some(mask) = status
+        .lines()
+        .find_map(|line| line.strip_prefix("Cpus_allowed:"))
+    else {
+        return false;
+    };
+    let count = mask.trim().split(',').try_fold(0usize, |sum, word| {
+        u32::from_str_radix(word, 16).map(|bits| sum + bits.count_ones() as usize)
+    });
+    count.is_ok_and(|count| count > cpus)
+}
+
 fn runtime(check: bool) -> io::Result<()> {
     let cpus = std::thread::available_parallelism().map_or(1, |count| count.get());
-    let workers = match env::var("TOKIO_WORKER_THREADS") {
-        Ok(value) => value
-            .parse::<std::num::NonZeroUsize>()
-            .map_err(|_| io::Error::other("TOKIO_WORKER_THREADS must be a positive integer"))?
-            .get(),
-        Err(env::VarError::NotPresent) => cpus,
-        Err(error) => return Err(io::Error::other(error)),
-    };
-    let blocking_threads = match env::var("RILL_BLOCKING_THREADS") {
-        Ok(value) => usize::from(
-            value
-                .parse::<std::num::NonZeroU16>()
-                .map_err(|_| io::Error::other("RILL_BLOCKING_THREADS must be between 1 and 65535"))?
-                .get(),
-        ),
-        Err(env::VarError::NotPresent) => 1,
-        Err(error) => return Err(io::Error::other(error)),
-    };
     let enable_sendfile = match env::var("RILL_SENDFILE").as_deref() {
         Ok("0") => false,
         Ok("1") => true,
@@ -254,21 +254,45 @@ fn runtime(check: bool) -> io::Result<()> {
         _ => return Err(io::Error::other("RILL_SENDFILE must be 0 or 1")),
     };
     let streams = streams::configured()?;
-    // Each independent reactor needs at least one blocking worker. Other
-    // listeners also use Tokio's shared executor, so keep their existing pool.
-    if cfg!(target_os = "linux")
-        && workers > 1
-        && blocking_threads >= workers
+    let direct_http = cfg!(target_os = "linux")
         && enable_sendfile
         && streams.is_empty()
         && env::var_os("TLS_LISTEN").is_none()
         && env::var_os("RILL_STATIC_LISTEN").is_none()
-        && !policy::compression_from_env()?
-        // With larger proxy pools the shared scheduler won the forwarding
-        // benchmark. A config file can add routes on reload.
+        && !policy::compression_from_env()?;
+    let workers = match env::var("TOKIO_WORKER_THREADS") {
+        Ok(value) => value
+            .parse::<std::num::NonZeroUsize>()
+            .map_err(|_| io::Error::other("TOKIO_WORKER_THREADS must be a positive integer"))?
+            .get(),
+        Err(env::VarError::NotPresent) if direct_http && cpus == 2 && wider_cpu_affinity(cpus) => 1,
+        Err(env::VarError::NotPresent) => cpus,
+        Err(error) => return Err(io::Error::other(error)),
+    };
+    // A larger proxy, including a file-configured server that can gain routes
+    // on reload, uses the shared scheduler.
+    let independent_io = direct_http
+        && workers > 1
         && (workers == 2
-            || (env::var_os("RILL_CONFIG").is_none() && routing::from_env()?.is_empty()))
-    {
+            || (env::var_os("RILL_CONFIG").is_none() && routing::from_env()?.is_empty()));
+    let blocking_threads = match env::var("RILL_BLOCKING_THREADS") {
+        Ok(value) => usize::from(
+            value
+                .parse::<std::num::NonZeroU16>()
+                .map_err(|_| io::Error::other("RILL_BLOCKING_THREADS must be between 1 and 65535"))?
+                .get(),
+        ),
+        Err(env::VarError::NotPresent) if direct_http && workers == 1 && cpus == 2 => 2,
+        Err(env::VarError::NotPresent) if independent_io && workers <= cpus && workers <= 4 => {
+            workers
+        }
+        Err(env::VarError::NotPresent) => 1,
+        Err(error) => return Err(io::Error::other(error)),
+    };
+    if !check {
+        eprintln!("Rill workers: {workers} network, up to {blocking_threads} blocking");
+    }
+    if independent_io && blocking_threads >= workers {
         let reactors = plain::WorkerReactors::new(workers, blocking_threads);
         return reactors
             .runtime(0)?
