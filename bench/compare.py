@@ -116,7 +116,9 @@ def check(port, route, proc, expected=BODY):
 
 def rss_kib(pid):
     with open(f"/proc/{pid}/smaps_rollup") as stats:
-        return next(int(line.split()[1]) for line in stats if line.startswith("Rss:"))
+        total = next(int(line.split()[1]) for line in stats if line.startswith("Rss:"))
+    children = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
+    return total + sum(rss_kib(int(child)) for child in children)
 
 
 def run_sample(args, script, port, route, proc, seconds):
@@ -176,7 +178,8 @@ def main():
     parser.add_argument("--wrk", default=os.getenv("WRK", "wrk"))
     parser.add_argument("--static-layout", choices=["file", "index", "many"], default="file",
                         help="serve a named file, a directory index, or 64 rotating files")
-    parser.add_argument("--server-cpu", type=int, required=True)
+    parser.add_argument("--server-cpu", "--server-cpus", dest="server_cpus", type=int, nargs="+", required=True,
+                        help="frontend logical CPUs; select one per physical core")
     parser.add_argument("--backend-cpu", type=int, required=True)
     parser.add_argument("--client-cpus", type=int, nargs="+", required=True)
     parser.add_argument("--payload-bytes", type=int, default=len(BODY),
@@ -186,7 +189,7 @@ def main():
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--connections", type=int, default=64)
     args = parser.parse_args()
-    cpus = [args.server_cpu, args.backend_cpu, *args.client_cpus]
+    cpus = [*args.server_cpus, args.backend_cpu, *args.client_cpus]
     if len(cpus) != len(set(cpus)) or not set(cpus) <= os.sched_getaffinity(0):
         parser.error("choose distinct CPUs permitted by this process's affinity")
     if min(args.seconds, args.warmup, args.repeat) < 1:
@@ -233,14 +236,14 @@ def main():
             static_script = root / "rotate.lua"
             static_script.write_text(validation_script(len(body))
                                      + f'local file_suffix = "{file_suffix}"\n' + ROTATE_FILES)
-        def start_rill(binary, cpu, port, upstreams=None, **settings):
-            env = dict(os.environ, TOKIO_WORKER_THREADS="1", DOCUMENT_ROOT=temp,
+        def start_rill(binary, cpus, port, upstreams=None, **settings):
+            env = dict(os.environ, TOKIO_WORKER_THREADS=str(len(cpus)), DOCUMENT_ROOT=temp,
                        LISTEN=f"127.0.0.1:{port}", **settings)
             env.pop("RILL_ROUTES", None)
             env.pop("UPSTREAMS", None)
             if upstreams:
                 env["UPSTREAMS"] = upstreams
-            return running.enter_context(process(["taskset", "-c", str(cpu), binary], env=env))
+            return running.enter_context(process(["taskset", "-c", ",".join(map(str, cpus)), binary], env=env))
 
         with ExitStack() as reserved:
             sockets = [reserved.enter_context(socket.socket()) for _ in range(3)]
@@ -250,7 +253,7 @@ def main():
 
         upstream = f"127.0.0.1:{backend_port}"
         if args.workload in (None, "proxy"):
-            backend = start_rill(args.rill, args.backend_cpu, backend_port)
+            backend = start_rill(args.rill, [args.backend_cpu], backend_port)
             check(backend_port, ROUTES["proxy"], backend, body)
         if args.asset_cache_ab:
             variants = [("rill-uncached", args.rill, {"RILL_ASSET_CACHE_ENTRIES": "0"}),
@@ -262,14 +265,14 @@ def main():
             variants = [("rill", args.rill, {})]
             if args.baseline_rill:
                 variants.append(("rill-baseline", args.baseline_rill, {}))
-        servers = [(name, p, start_rill(binary, args.server_cpu, p, upstream, **settings))
+        servers = [(name, p, start_rill(binary, args.server_cpus, p, upstream, **settings))
                    for (name, binary, settings), p in zip(variants, (port, other_port))]
         if args.nginx:
             config = root / "nginx.conf"
             config.write_text(f"""
 daemon off;
-master_process off;
-worker_processes 1;
+master_process {"on" if len(args.server_cpus) > 1 else "off"};
+worker_processes {len(args.server_cpus)};
 pid nginx.pid;
 error_log stderr warn;
 events {{ worker_connections 1024; }}
@@ -287,7 +290,7 @@ http {{
         keepalive 128;
     }}
     server {{
-        listen 127.0.0.1:{other_port};
+        listen 127.0.0.1:{other_port}{" reuseport" if len(args.server_cpus) > 1 else ""};
         root "{root}";
         location /api/ {{
             proxy_http_version 1.1;
@@ -298,11 +301,11 @@ http {{
 }}
 """)
             nginx = running.enter_context(process([
-                "taskset", "-c", str(args.server_cpu), args.nginx,
+                "taskset", "-c", ",".join(map(str, args.server_cpus)), args.nginx,
                 "-p", str(root), "-c", str(config), "-e", "stderr",
             ]))
             servers.append(("nginx", other_port, nginx))
-        print(f"server CPU {args.server_cpu}, backend CPU {args.backend_cpu}, "
+        print(f"server CPUs {args.server_cpus}, backend CPU {args.backend_cpu}, "
               f"client CPUs {args.client_cpus}, {args.connections} connections, "
               f"{args.warmup}s warmup + {args.seconds}s measured", flush=True)
         print("workload server run requests/s p95_ms peak_rss_mib verified_responses", flush=True)
