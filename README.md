@@ -25,17 +25,16 @@ On Windows hosts, Rill also runs as a native executable. See the [Windows deploy
 
 ## Run with Docker or Kubernetes
 
-Build the Linux image from the repository root and publish it on localhost. The image includes the sample site and runs as UID 10001.
+Run the release image on localhost. It includes the sample site and runs as UID 10001.
 
 ```sh
-docker build -f deploy/Dockerfile -t rill:local .
-docker run --rm -p 127.0.0.1:8080:8080 rill:local
+docker run --rm -p 127.0.0.1:8080:8080 ghcr.io/dperox/rill:0.1.0
 ```
 
-For Kubernetes, make the image available to each node first. For example, `kind load docker-image rill:local` loads it into the default local kind cluster. Then deploy the two replicas and access the ClusterIP Service from your machine.
+For Kubernetes, deploy two replicas and access the ClusterIP Service:
 
 ```sh
-kubectl apply -f deploy/kubernetes.yaml
+kubectl apply -f https://raw.githubusercontent.com/dperox/rill/v0.1.0/deploy/kubernetes.yaml
 kubectl rollout status deployment/rill
 kubectl port-forward service/rill 8080:8080
 ```
@@ -78,7 +77,7 @@ Rill defaults to **one blocking worker** for filesystem operations and DNS. Set 
 
 `cargo test --locked` runs the Rust unit tests. The [testing guide](docs/testing.md) covers the HTTP and transport integration suites, including how to replay the 56 recorded HTTP cases. The [implementation notes](docs/crates.md) describe the Rust dependencies and HTTP transports.
 
-On Linux, Rill can use sendfile and cache immutable assets. Windows supports opt-in TransmitFile for large plaintext downloads. macOS uses buffered file delivery. See the [static file guide](docs/static-io.md) for platform behavior and the [benchmark report](bench/sendfile.md) for measured results and host details.
+On Linux, Rill can use sendfile and cache immutable assets. Windows uses TransmitFile by default for large plaintext downloads. macOS uses buffered file delivery. See the [static file guide](docs/static-io.md) for platform behavior and the [benchmark report](bench/sendfile.md) for measured results and host details.
 
 ## Contributing
 

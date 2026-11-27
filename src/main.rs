@@ -333,7 +333,7 @@ async fn run(check: bool) -> io::Result<()> {
     let enable_sendfile = match env::var("RILL_SENDFILE").as_deref() {
         Ok("0") => false,
         Ok("1") => true,
-        Err(env::VarError::NotPresent) => cfg!(target_os = "linux"),
+        Err(env::VarError::NotPresent) => cfg!(any(windows, target_os = "linux")),
         _ => return Err(io::Error::other("RILL_SENDFILE must be 0 or 1")),
     };
     let static_addr = env::var("RILL_STATIC_LISTEN").ok();

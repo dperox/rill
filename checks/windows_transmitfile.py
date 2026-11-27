@@ -40,11 +40,15 @@ def main():
         with (root / "slow.bin").open("wb") as slow:
             slow.truncate(64 * 1024**2)
         env = dict(os.environ, DOCUMENT_ROOT=directory, TOKIO_WORKER_THREADS="1",
-                   RILL_BLOCKING_THREADS="1", RILL_SENDFILE="1")
+                   RILL_BLOCKING_THREADS="1")
+        env.pop("RILL_SENDFILE", None)
         with launch([RILL], dict(env, COMPRESS="0")) as port:
             pipeline(port)
             ranges_and_validators(port)
             saturated(port)
+        with launch([RILL], dict(env, COMPRESS="0", RILL_SENDFILE="0")) as port:
+            pipeline(port)
+            ranges_and_validators(port)
         with launch([RILL], dict(env, COMPRESS="1")) as port:
             status, headers, body = fetch(port, "GET", "/large.txt", {"Accept-Encoding": "gzip"})
             assert status == 200 and headers.get("content-encoding") == "gzip"

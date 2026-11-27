@@ -6,7 +6,7 @@ Set `DOCUMENT_ROOT` to an existing directory. The source build defaults to
 
 ## Linux sendfile
 
-`RILL_SENDFILE` accepts `0` or `1` and defaults to `1` on Linux.
+`RILL_SENDFILE` accepts `0` or `1` and defaults to `1` on Linux and Windows.
 Ordinary plaintext HTTP/1 GETs larger than 64 KiB use the open file descriptor
 to transfer directly to the socket when compression is disabled. HEAD and
 matching validators skip reads of the body. Small files through 64 KiB use
@@ -29,7 +29,7 @@ place.
 
 ## Windows TransmitFile
 
-Native Windows uses buffered static delivery by default. Set `RILL_SENDFILE=1` at startup to use Winsock TransmitFile for eligible plaintext HTTP/1 GET responses larger than 64 KiB. The dispatcher flushes the response headers before starting the transfer and waits for the advertised byte count before processing the next response on that connection.
+Native Windows uses Winsock TransmitFile by default for eligible plaintext HTTP/1 GET responses larger than 64 KiB. Set `RILL_SENDFILE=0` before startup to use buffered delivery. The dispatcher flushes the response headers before starting the transfer and waits for the advertised byte count before processing the next response on that connection.
 
 Rill reserves at most two direct transfers per process. Additional downloads immediately take the buffered path. Two dedicated completion workers keep slow transfers off the Tokio network and filesystem pools. A reset or short transfer ends that response. HEAD, byte ranges, TLS, and gzip keep their existing handling. The immutable asset cache is Linux-only. See the [Windows benchmarks](../bench/windows.md).
 

@@ -5,6 +5,7 @@ COPY src ./src
 RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/dperox/rill"
 WORKDIR /app
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /build/target/release/rill /usr/local/bin/rill

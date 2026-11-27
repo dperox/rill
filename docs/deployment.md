@@ -18,7 +18,7 @@ $env:LISTEN = '127.0.0.1:8080'
 if ($LASTEXITCODE -eq 0) { .\rill.exe }
 ```
 
-In a second shell, run `curl.exe -i http://127.0.0.1:8080/` and verify the expected page. Native checks covered static GET and HEAD, HTTPS, HTTP proxying and policies, TCP and UDP forwarding, and configuration preflight. On Windows, restart Rill to apply a new configuration. To opt into direct transfer of large plaintext static responses, set `RILL_SENDFILE=1`. [Windows file settings](static-io.md#windows-transmitfile)
+In a second shell, run `curl.exe -i http://127.0.0.1:8080/` and verify the expected page. Native checks covered static GET and HEAD, HTTPS, HTTP proxying and policies, TCP and UDP forwarding, and configuration preflight. On Windows, restart Rill to apply a new configuration. Set `RILL_SENDFILE=0` before startup to use buffered file delivery instead of Windows TransmitFile. [Windows file settings](static-io.md#windows-transmitfile)
 
 ## Docker
 
@@ -114,7 +114,7 @@ For an existing kind cluster, build `rill:local` as above, then run:
 
 ```sh
 kind load docker-image rill:local
-kubectl apply -f deploy/kubernetes.yaml
+sed 's|image: ghcr.io/dperox/rill:0.1.0|image: rill:local|' deploy/kubernetes.yaml | kubectl apply -f -
 kubectl rollout status deployment/rill
 kubectl port-forward service/rill 8080:8080
 ```
@@ -132,7 +132,7 @@ from.
 ```sh
 docker tag rill:local registry.example.com/team/rill:v1
 docker push registry.example.com/team/rill:v1
-sed 's|image: rill:local|image: registry.example.com/team/rill:v1|' \
+sed 's|image: ghcr.io/dperox/rill:0.1.0|image: registry.example.com/team/rill:v1|' \
   deploy/kubernetes.yaml | kubectl apply -f -
 kubectl rollout status deployment/rill
 ```
