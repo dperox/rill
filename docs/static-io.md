@@ -49,8 +49,9 @@ transfer size are independent of this setting. Larger buffered chunks can
 improve throughput and increase memory held by clients with downloads in
 flight. Compare settings at representative file sizes and client concurrency.
 
-`RILL_BLOCKING_THREADS` sets the pool limit for filesystem tasks and DNS
-lookups. The default is one blocking worker, regardless of the number of
-async network workers. Set a positive integer from 1 to 65535. A larger pool can absorb more
-concurrent slow operations and increase memory. The [benchmark guide](../bench/README.md)
-shows how to measure throughput and idle connections.
+`RILL_BLOCKING_THREADS` sets the process-wide limit on blocking workers for
+filesystem tasks and DNS lookups. It defaults to one and accepts a positive
+integer from 1 to 65535. The Linux plaintext scheduler can divide that budget
+among network workers. A larger pool can handle more concurrent slow
+operations and use more memory. [Worker scheduling](hyper.md#linux-http-worker-scheduling)
+and [benchmark guide](../bench/README.md).

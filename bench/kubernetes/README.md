@@ -1,6 +1,6 @@
 # Rill behind Kubernetes HTTPS ingress
 
-This lab runs Rill v0.1.0 behind Traefik 3.8.0 on Kubernetes 1.37.0. It uses one
+This lab runs Rill behind Traefik 3.8.0 on Kubernetes 1.37.0. It uses one
 control plane and three worker nodes. Each worker runs one Traefik pod, one
 Rill pod and one pod from each of two origin services.
 
@@ -20,6 +20,58 @@ readiness probes gate traffic to the pods, and Rill checks the two upstream
 Services every two seconds. A rolling update replaces one Rill replica at a
 time while keeping three available. A PodDisruptionBudget allows one voluntary
 eviction.
+
+## Linux worker scheduling
+
+We kept two network workers, two blocking workers and a two-CPU limit per
+Rill pod. We measured v0.1.0 in the same cluster, then alternated the final
+build and NGINX 1.30.8 in each workload. The image was the only
+deployment setting that changed. [Measured Rill revision](https://github.com/dperox/rill/commit/7f87daf)
+
+| Workload | Connections | v0.1.0 req/s | New Rill req/s | NGINX req/s | v0.1.0 p95 | New Rill p95 | NGINX p95 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Static 4 KiB | 64 | 29,900 | 31,494 | 32,601 | 4.24 ms | 3.93 ms | 3.78 ms |
+| Proxied download 256 KiB | 64 | 9,492 | 10,321 | 10,178 | 11.81 ms | 11.05 ms | 11.12 ms |
+| Mixed | 64 | 23,569 | 25,116 | 25,935 | 5.24 ms | 4.83 ms | 4.92 ms |
+| Mixed | 256 | 24,110 | 25,420 | 26,338 | 20.81 ms | 20.07 ms | 19.08 ms |
+
+Mixed throughput rose 6.6% at 64 connections and 5.4% at 256, bringing
+Rill within 3.2–3.5% of NGINX. Downloads improved 8.7% over v0.1.0
+and finished 1.4% ahead of NGINX.
+
+Each entry is the median of three ten-second measurements after a three-second
+warmup. The client checked all 8,303,881 responses and recorded zero HTTP,
+body-validation or transport errors. These short, warm runs share one WSL2
+host. [All 36 rounds, including p99](scheduler-rounds.csv)
+
+An earlier v0.1.0 control kept both CPUs and both blocking workers. At 64 mixed
+connections, one network worker handled 27,655 and 27,493 requests/s in two
+ten-second rounds. Two network workers handled 23,924 and 23,911. One worker
+per pod remains a useful setting for this particular traffic mix.
+
+### What changed inside the pod
+
+In v0.1.0, two threads ran the HTTP connections and two more ran Tokio’s
+shared I/O scheduler. A socket becoming ready could wake a different thread
+to process its request. Both network workers now accept connections from
+the same listening socket.
+Each worker drives I/O for the connections it accepts. Each also gets one
+blocking worker for filesystem work and DNS in this two-CPU setup.
+[Worker implementation](../../src/plain/workers.rs)
+
+We sampled Linux `/proc/1/task/*/schedstat` across all three Rill pods before
+and after a separate ten-second mixed run at 64 connections. Frontend CPU
+includes filesystem work. Traefik, the origins and wrk run outside these
+processes. Each row below represents one trace, and CPU time includes the
+short interval needed to collect the counters.
+
+| Build | Threads per pod | Valid responses | Frontend CPU per response | Linux scheduling slices per response |
+|---|---:|---:|---:|---:|
+| Rill v0.1.0 | 6 | 242,022 | 209 µs | 2.91 |
+| Rill 7f87daf | 4 | 258,001 | 152 µs | 1.39 |
+
+That is 27% less frontend CPU per response and 52% fewer scheduling slices
+per response in the trace. [Per-thread counter deltas](scheduler-trace.csv)
 
 ## Rill vs. NGINX
 
@@ -134,6 +186,47 @@ Choose one logical CPU per physical core from the CPUs available to the load
 generator. The benchmark uses its private host alias file. The self-signed TLS certificates and keys stay
 in the lab directory. The curl preflight checks the certificate and hostname. wrk measures TLS traffic without certificate
 verification.
+
+### Reproduce the scheduling comparison
+
+Use the cluster above with both frontends deployed. The image tag below is
+local to the lab. The benchmark manifest pins the public v0.1.0 release.
+
+```sh
+rev=7f87daf
+image="localhost/rill:scheduling-$rev"
+git worktree add --detach "$lab/src-$rev" "$rev"
+podman build -t "$image" -f "$lab/src-$rev/deploy/Dockerfile" "$lab/src-$rev"
+podman save -o "$lab/rill-$rev.tar" "$image"
+kind load image-archive --name rill-benchmark "$lab/rill-$rev.tar"
+original=$(kubectl -n rill-bench get deploy rill -o jsonpath='{.spec.template.spec.containers[0].image}')
+kubectl -n rill-bench set image deploy/rill "rill=$image"
+kubectl -n rill-bench rollout status deploy/rill
+mkdir -p "$lab/$rev" "$lab/release"
+cp "$lab/hosts" "$lab/$rev/hosts"
+cp "$lab/hosts" "$lab/release/hosts"
+python3 bench/kubernetes/run.py "$lab/$rev" --seconds 10 --warmup 3 --compare-nginx
+kubectl -n rill-bench set image deploy/rill "rill=$original"
+kubectl -n rill-bench rollout status deploy/rill
+python3 bench/kubernetes/run.py "$lab/release" --seconds 10 --warmup 3
+```
+
+To reproduce a scheduler trace, run the following with each image while its
+three pods are ready. Match rows by pod and thread ID across the two snapshots.
+Sum the counter differences and divide by the number of checked responses
+on wrk’s `RESULT` line. Repeat the trace if any thread appears or disappears.
+
+```sh
+export HOSTALIASES="$lab/hosts"
+mixed() {
+  taskset -c 16,18,20,22,24,26,28,30 wrk -t8 -c64 "-d${1}s" --timeout 5s \
+    -s bench/kubernetes/mixed.lua https://rill-bench:18443 -- mixed
+}
+mixed 3
+python3 bench/kubernetes/scheduler-snapshot.py > "$lab/before.csv"
+mixed 10
+python3 bench/kubernetes/scheduler-snapshot.py > "$lab/after.csv"
+```
 
 The cluster context and kubeconfig are dedicated to this lab. To remove the
 cluster after testing, run `kind delete cluster --name rill-benchmark` with

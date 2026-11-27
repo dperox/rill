@@ -20,5 +20,24 @@ limits individual sendfile calls to 1 MiB and falls back to positional reads on
 unsupported filesystems. Upgrades transfer any read-ahead bytes to the tunnel
 and hold the upstream lease until relay completion.
 
+## Linux HTTP worker scheduling
+
+When Rill runs a single plaintext direct-file listener, each network worker can
+accept from the same listening socket and drive I/O for its own connections.
+A client stays on that worker for the lifetime of its connection. Routes,
+health checks and application caches are shared across workers.
+
+For a two-CPU Linux pod behind an ingress, setting `TOKIO_WORKER_THREADS=2`
+and `RILL_BLOCKING_THREADS=2` enables this layout on the single plaintext
+direct-file listener. Rill splits the blocking budget between the two workers.
+
+With more than two network workers, Rill also uses this layout for a static
+server that has at least one blocking worker per network worker, no upstream
+routes, and no `RILL_CONFIG` file that could add routes on reload. Larger
+proxy deployments use the shared runtime. Compression, additional TLS,
+stream or static listeners, and a smaller blocking budget also select the
+shared runtime.
+[Scheduling measurements](../bench/kubernetes/README.md#linux-worker-scheduling)
+
 See the [Rill vs. NGINX benchmarks](../bench/http-kit-static.md) and
 [static file settings](static-io.md).

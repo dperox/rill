@@ -2,7 +2,7 @@
 
 ## Throughput by core count
 
-Median requests per second with 64 clients. The last column divides the four-core result by the one-core result for the same server and workload.
+Median requests per second for Rill v0.1.0 and NGINX 1.30.8 with 64 clients. The last column divides the four-core result by the one-core result for the same server and workload.
 
 | Workload | Server | 1 core | 2 cores | 4 cores | 4 cores / 1 core |
 |---|---|---:|---:|---:|---:|
@@ -14,6 +14,42 @@ Median requests per second with 64 clients. The last column divides the four-cor
 | Proxy 4 KiB | NGINX | 23,119 | 58,921 | 60,436 | 2.61× |
 | Proxy 256 KiB | Rill | 9,740 | 12,940 | 24,940 | 2.56× |
 | Proxy 256 KiB | NGINX | 2,603 | 5,675 | 13,320 | 5.12× |
+
+## Linux worker scheduling after v0.1.0
+
+This before-and-after run uses the Linux binaries from the v0.1.0 image and
+commit [7f87daf](https://github.com/dperox/rill/commit/7f87daf).
+Each frontend had one network worker and one blocking worker per assigned
+core. The static runs configured only a document root. Both proxy frontends
+used the same single-core Rill origin. CPU placement, 64
+connections, response checks and round durations follow the setup below.
+
+| Frontend cores | 4 KiB workload | v0.1.0 req/s | New Rill req/s | v0.1.0 p95 | New Rill p95 |
+|---:|---|---:|---:|---:|---:|
+| 2 | Static | 60,913 | 82,662 | 1.55 ms | 1.12 ms |
+| 2 | Proxy | 35,940 | 43,600 | 4.30 ms | 2.39 ms |
+| 4 | Static | 129,357 | 204,546 | 1.17 ms | 0.50 ms |
+| 4 | Proxy | 75,302 | 76,140 | 1.43 ms | 1.41 ms |
+
+The new build’s four-core static samples ranged from 171k to 214k requests/s.
+The table shows medians of three alternating rounds. The client validated 6,509,117 responses
+across both builds. [Native samples](scheduler-native-rounds.csv) and
+[the Kubernetes comparison with NGINX and CPU traces](kubernetes/README.md#linux-worker-scheduling).
+
+The first implementation also used independent reactors for four-worker
+proxies. In a separate 4 KiB proxy test, its three throughput samples were
+65,067, 67,151 and 66,407 requests/s, compared with 74,594, 74,954 and
+76,543 for v0.1.0. Giving each worker its own upstream HTTP connection pool
+in a follow-up trial reduced p95 but did not recover median throughput.
+The final build keeps larger proxies on the shared scheduler. This includes
+file-configured deployments that can add proxy routes on reload.
+[First implementation](https://github.com/dperox/rill/commit/a74bcf3)
+
+To repeat this comparison with the driver below, supply
+`--baseline-rill /path/to/v0.1.0/rill --rill /path/to/new/rill` as the
+comparison pair. Run `--workload static` and `--workload proxy` separately
+with a 4096-byte payload. Set `RILL_BLOCKING_THREADS` to
+the number of frontend cores for each run.
 
 ## One frontend core
 
