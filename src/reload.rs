@@ -19,14 +19,24 @@ struct FileConfig {
     #[serde(default)]
     sites: Vec<sites::Definition>,
     routes: Option<Vec<routing::Definition>>,
-    tls: Option<PemPaths>,
+    tls: Option<TlsConfig>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PemPaths {
+struct TlsConfig {
     cert: PathBuf,
     key: PathBuf,
+    #[serde(default)]
+    hosts: Vec<HostCertificate>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HostCertificate {
+    pub host: String,
+    pub cert: PathBuf,
+    pub key: PathBuf,
 }
 
 struct Source {
@@ -48,18 +58,19 @@ impl Source {
             .unwrap_or(std::path::Path::new("."));
         let sites = sites::load(file.sites, base, self.chunk)?;
         let paths = if let Some(paths) = file.tls {
-            let directory = self.path.as_ref().unwrap().parent().unwrap();
-            Some((directory.join(paths.cert), directory.join(paths.key)))
+            Some((base.join(paths.cert), base.join(paths.key), paths.hosts))
         } else {
             match (env::var_os("TLS_CERT"), env::var_os("TLS_KEY")) {
                 (None, None) => None,
-                (Some(cert), Some(key)) => Some((cert.into(), key.into())),
+                (Some(cert), Some(key)) => Some((cert.into(), key.into(), Vec::new())),
                 _ => return Err(io::Error::other("set TLS_CERT and TLS_KEY together")),
             }
         };
         let tls = match (self.secure, paths) {
             (false, None) => None,
-            (true, Some((cert, key))) => Some(Arc::new(edge::credentials(&cert, &key)?)),
+            (true, Some((cert, key, hosts))) => {
+                Some(Arc::new(edge::credentials(&cert, &key, base, hosts)?))
+            }
             _ => {
                 return Err(io::Error::other(
                     "set TLS_LISTEN and TLS credentials together",

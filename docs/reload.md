@@ -29,6 +29,8 @@ For an HTTP-only instance, omit both the `tls` object and `TLS_LISTEN`. The opti
 
 ## Apply an update
 
+For independently managed domains, include the [per-host chains](edge.md#per-host-certificates) in `tls.hosts`. Omitting the list restores default-chain-only service.
+
 For certificate rotation, stage both PEM files at new paths and reference them in the replacement JSON. Write the complete JSON to a sibling file first. Rename it into place and signal the same Rill process.
 
 ```sh

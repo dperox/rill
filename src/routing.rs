@@ -8,6 +8,8 @@ pub struct Definition {
     host: Option<String>,
     prefix: String,
     upstreams: Vec<String>,
+    #[serde(default)]
+    failover: bool,
 }
 
 pub struct Route {
@@ -35,6 +37,7 @@ pub fn from_env() -> io::Result<Vec<Definition>> {
         definitions.push(Definition {
             host: None,
             prefix: "/api/".into(),
+            failover: false,
             upstreams: list.split(',').map(|s| s.trim().to_owned()).collect(),
         });
     }
@@ -88,6 +91,7 @@ pub fn load(definitions: Vec<Definition>, policy: &policy::Policies) -> io::Resu
             prefix: d.prefix,
             pool: Arc::new(Pool {
                 servers,
+                failover: d.failover,
                 active,
                 policy: policy.clone(),
                 next: AtomicUsize::new(0),

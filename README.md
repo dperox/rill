@@ -54,6 +54,8 @@ A request for `/api/products?limit=5` reaches the backend with that path and que
 | Inspect HTTP requests and backend failures | Set `RILL_ACCESS_LOG=1` for JSON access records on stderr. [Access logging](docs/policy.md#access-logging) |
 | Reload routes, sites and certificates on Unix | Set `RILL_CONFIG` to a JSON file and send `SIGHUP`. [Graceful reloads](docs/reload.md) |
 | Verify upstream readiness and identity | Configure TCP or HTTP probes with `RILL_HEALTH_INTERVAL_SECS` and `RILL_HEALTH_PATH`. HTTPS pools support a private CA and client certificates. [Upstream configuration](docs/routing.md#upstream-https-and-mutual-tls) |
+| Redirect plaintext traffic and serve per-host certificates | Set `RILL_HTTPS_REDIRECT` and configure `tls.hosts` for SNI. [HTTPS configuration](docs/edge.md) |
+| Retry a failed backend connection | Enable `failover` on selected HTTP routes. [Failover scope](docs/routing.md#connection-failover) |
 | Enable HTTPS and QUIC | Set `TLS_LISTEN` and supply the server certificate and key. HTTP/3 uses UDP on the same port as HTTPS over TCP. [TLS and protocol checks](docs/edge.md) |
 | Cache proxy responses, compress or limit requests | `CACHE_TTL`, `CACHE_COALESCE`, `COMPRESS`, `RATE_LIMIT`, `ALLOW_IPS`, `DENY_IPS`. [HTTP policies](docs/policy.md) |
 | Forward TCP, UDP or mail to backends | `RILL_TCP_LISTENERS`, `RILL_UDP_LISTENERS`, `RILL_STREAM_BALANCE`. [Transport configuration](docs/streams.md) |

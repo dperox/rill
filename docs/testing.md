@@ -57,6 +57,6 @@ These checks start loopback listeners and temporary fixtures. The sendfile and a
 
 ## Feature acceptance
 
-Run `./checks/features.sh` from Linux or WSL. It builds a locked debug binary, then runs the reload, WebSocket, static site and access log acceptance checks against that binary. Set `RILL` to an absolute binary path to test an existing build instead.
+Run `./checks/features.sh` from Linux or WSL. It builds a locked debug binary, then runs the reload, WebSocket, static site, access log, redirect, SNI and failover acceptance checks against that binary. Set `RILL` to an absolute binary path to test an existing build instead.
 
-These checks use loopback connections and temporary fixtures. With the optional HTTP/3 dependencies from the [TLS guide](edge.md#local-protocol-check), run `python3 checks/reload.py --http3` to check QUIC routing and certificate rotation too. The [feature guide](features.md) describes the client and operator behaviors they verify.
+These checks use loopback connections and temporary fixtures. With the optional HTTP/3 dependencies from the [TLS guide](edge.md#local-protocol-check), run `python3 checks/reload.py --http3` to check QUIC routing and default certificate rotation. Run `python3 checks/edge_routing.py --http3` to verify a named certificate over QUIC after rotation. The [feature guide](features.md) describes the client and operator behaviors they verify.

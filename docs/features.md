@@ -2,7 +2,7 @@
 
 Describe a feature in terms of what a client or operator can do. A proposal can start as a [feature request](../.github/ISSUE_TEMPLATE/feature.md). Include one example of success and one failure the implementation must handle. Deliver one independently testable behavior at a time.
 
-On Linux or WSL, `./checks/features.sh` exercises reloads, WebSockets, per-host static roots and access logs. The table lists the separate checks for other capabilities. Build prerequisites and invocation details are in the [test guide](testing.md).
+On Linux or WSL, `./checks/features.sh` exercises reloads, WebSockets, per-host static roots access logs, redirects, certificate selection, and upstream failover. The table lists the separate checks for other capabilities. Build prerequisites and invocation details are in the [test guide](testing.md).
 
 ## Acceptance contracts
 
@@ -16,6 +16,9 @@ On Linux or WSL, `./checks/features.sh` exercises reloads, WebSockets, per-host 
 | [HTTP policies](policy.md) | IP rules deny requests, per-peer limits return 429, and eligible responses use negotiated gzip. | [HTTP policies](../checks/policy.py) |
 | [Proxy response cache](policy.md#proxy-cache) | Public responses can be reused, concurrent misses coalesced, and successful writes invalidate cached variants. | [Eligibility and expiry](../checks/policy.py), [coalescing and invalidation](../checks/upstreams.py) |
 | [TCP, UDP and mail forwarding](streams.md) | Listeners balance TCP connections and UDP sessions. Mail backends handle authentication and protocol exchanges. | [Transport checks](../checks/streams.py) |
+| [HTTPS redirects](edge.md#redirect-plaintext-http) | Plain HTTP redirects to the configured public authority with the path and query intact. | [Edge routing](../checks/edge_routing.py) |
+| [Per-host certificates](edge.md#per-host-certificates) | Fresh handshakes get the named or default certificate, including after rotation. | [SNI and rollback](../checks/edge_routing.py) |
+| [Connection failover](routing.md#connection-failover) | A bodyless read can reach a second peer after a connection error. | [Read and write behavior](../checks/edge_routing.py) |
 | [Graceful HTTP configuration reload](reload.md) | An operator changes routes or rotates a server certificate while Rill serves traffic. Existing work completes. A rejected candidate leaves the last working configuration in service. | [Reload a live process](../checks/reload.py) |
 | [WebSocket proxying](routing.md#websockets) | A client opens an HTTP/1.1 WebSocket on an HTTP route and exchanges messages with its backend over plaintext or TLS. A refused handshake remains an HTTP response. | [Exercise the handshake and tunnel](../checks/websocket.py) |
 | [Per-host static sites](routing.md#per-host-static-sites) | Hosts serve independent document roots and reload atomically. | [Site isolation and reload](../checks/sites.py) |

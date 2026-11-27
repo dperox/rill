@@ -25,20 +25,63 @@ pub struct Credentials {
     quic: Arc<quinn::ServerConfig>,
 }
 
-pub fn credentials(certificate: &Path, key: &Path) -> io::Result<Credentials> {
+use rustls::{
+    server::{ClientHello, ResolvesServerCert, ResolvesServerCertUsingSni},
+    sign::CertifiedKey,
+};
+
+#[derive(Debug)]
+struct Certificates {
+    default: Arc<CertifiedKey>,
+    named: ResolvesServerCertUsingSni,
+}
+
+impl ResolvesServerCert for Certificates {
+    fn resolve(&self, hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        self.named
+            .resolve(hello)
+            .or_else(|| Some(self.default.clone()))
+    }
+}
+
+fn load_key(certificate: &Path, key: &Path) -> io::Result<CertifiedKey> {
     let certs = CertificateDer::pem_file_iter(certificate)
         .map_err(io::Error::other)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(io::Error::other)?;
     let key = PrivateKeyDer::from_pem_file(key).map_err(io::Error::other)?;
+    CertifiedKey::from_der(certs, key, &rustls::crypto::ring::default_provider())
+        .map_err(io::Error::other)
+}
+
+pub fn credentials(
+    cert: &Path,
+    key: &Path,
+    base: &Path,
+    hosts: Vec<crate::reload::HostCertificate>,
+) -> io::Result<Credentials> {
+    let default = Arc::new(load_key(cert, key)?);
+    let mut named = ResolvesServerCertUsingSni::new();
+    let mut names = std::collections::HashSet::new();
+    for host in hosts {
+        let name = host.host.to_ascii_lowercase();
+        if !names.insert(name.clone()) {
+            return Err(io::Error::other("duplicate TLS hostname"));
+        }
+        named
+            .add(
+                &name,
+                load_key(&base.join(host.cert), &base.join(host.key))?,
+            )
+            .map_err(io::Error::other)?;
+    }
     let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
     .with_safe_default_protocol_versions()
     .map_err(io::Error::other)?
     .with_no_client_auth()
-    .with_single_cert(certs, key)
-    .map_err(io::Error::other)?;
+    .with_cert_resolver(Arc::new(Certificates { default, named }));
     config.alpn_protocols = vec![b"h3".to_vec()];
     let quic = quinn::crypto::rustls::QuicServerConfig::try_from(config.clone())
         .map_err(io::Error::other)?;
@@ -48,6 +91,47 @@ pub fn credentials(certificate: &Path, key: &Path) -> io::Result<Credentials> {
         tcp: TlsAcceptor::from(Arc::new(config)),
         quic,
     })
+}
+
+pub fn redirect_from_env(app: Router) -> io::Result<Router> {
+    use axum::http::uri::Authority;
+    use axum::{
+        extract::State,
+        middleware::{self, Next},
+        response::{IntoResponse, Redirect},
+    };
+    let target = match std::env::var("RILL_HTTPS_REDIRECT") {
+        Err(std::env::VarError::NotPresent) => return Ok(app),
+        value => value.map_err(io::Error::other)?,
+    };
+    let authority: Authority = target.parse().map_err(io::Error::other)?;
+    if authority.host().is_empty()
+        || target.contains(['@', '%', '\\'])
+        || (target.len() != authority.host().len() && authority.port_u16().is_none())
+    {
+        return Err(io::Error::other(
+            "RILL_HTTPS_REDIRECT needs a public host and optional port",
+        ));
+    }
+    async fn redirect(
+        State(target): State<Authority>,
+        req: axum::extract::Request,
+        next: Next,
+    ) -> axum::response::Response {
+        if req
+            .extensions()
+            .get::<crate::policy::SecureTransport>()
+            .is_some()
+        {
+            return next.run(req).await;
+        }
+        let path = req.uri().path_and_query().map_or("/", |v| v.as_str());
+        if !path.starts_with('/') {
+            return crate::error_page(StatusCode::BAD_REQUEST);
+        }
+        Redirect::permanent(&format!("https://{target}{path}")).into_response()
+    }
+    Ok(app.layer(middleware::from_fn_with_state(authority, redirect)))
 }
 
 pub async fn serve(address: &str, app: Router, live: crate::reload::Live) -> io::Result<()> {

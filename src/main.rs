@@ -51,6 +51,7 @@ fn error_page(code: StatusCode) -> Response {
 
 struct Pool {
     client: upstream::Transport,
+    failover: bool,
     servers: Vec<upstream::Endpoint>,
     healthy: Vec<std::sync::atomic::AtomicBool>,
     next: AtomicUsize,
@@ -124,18 +125,10 @@ async fn proxy(pool: Arc<Pool>, mut req: Request) -> Response {
             }
         }
     };
-    let Some((index, lease)) = pool.select() else {
+    let Some((mut index, mut lease)) = pool.select(None) else {
         return error_page(StatusCode::SERVICE_UNAVAILABLE);
     };
-    let peer = &pool.servers[index];
     *req.version_mut() = axum::http::Version::HTTP_11;
-    let mut parts = std::mem::take(req.uri_mut()).into_parts();
-    parts.scheme = Some(peer.scheme.clone());
-    parts.authority = Some(peer.authority.clone());
-    let Ok(uri) = Uri::from_parts(parts) else {
-        return error_page(StatusCode::BAD_REQUEST);
-    };
-    *req.uri_mut() = uri;
     strip_hop_headers(req.headers_mut());
     let handshake = if let Some(downstream) = downstream {
         let Some(handshake) = websocket::Handshake::new(downstream, req.headers()) else {
@@ -146,9 +139,41 @@ async fn proxy(pool: Arc<Pool>, mut req: Request) -> Response {
     } else {
         None
     };
-    req.headers_mut().insert(header::HOST, peer.host_header());
     let logging = req.extensions().get::<access_log::Enabled>().is_some();
-    let result = tokio::time::timeout(Duration::from_secs(60), pool.client.request(req)).await;
+    let replayable = pool.failover
+        && pool.servers.len() > 1
+        && handshake.is_none()
+        && matches!(
+            *req.method(),
+            axum::http::Method::GET | axum::http::Method::HEAD
+        )
+        && axum::body::HttpBody::is_end_stream(req.body());
+    let (parts, body) = req.into_parts();
+    let mut retry = replayable.then(|| Request::from_parts(parts.clone(), Body::empty()));
+    let mut req = Request::from_parts(parts, body);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    let result = loop {
+        let peer = &pool.servers[index];
+        let mut parts = std::mem::take(req.uri_mut()).into_parts();
+        parts.scheme = Some(peer.scheme.clone());
+        parts.authority = Some(peer.authority.clone());
+        let Ok(uri) = Uri::from_parts(parts) else {
+            return error_page(StatusCode::BAD_REQUEST);
+        };
+        *req.uri_mut() = uri;
+        req.headers_mut().insert(header::HOST, peer.host_header());
+        let result = tokio::time::timeout_at(deadline, pool.client.request(req)).await;
+        if matches!(&result, Ok(Err(error)) if error.is_connect())
+            && let Some(next_request) = retry.take()
+            && let Some((next_index, next_lease)) = pool.select(Some(index))
+        {
+            index = next_index;
+            lease = next_lease;
+            req = next_request;
+            continue;
+        }
+        break result;
+    };
     let mut response = match result {
         Ok(Ok(response)) if response.status() == StatusCode::SWITCHING_PROTOCOLS => {
             websocket::switch_protocols(response, handshake, lease)
@@ -172,7 +197,9 @@ async fn proxy(pool: Arc<Pool>, mut req: Request) -> Response {
         Err(_) => error_page(StatusCode::GATEWAY_TIMEOUT),
     };
     if logging {
-        response.extensions_mut().insert(peer.authority.clone());
+        response
+            .extensions_mut()
+            .insert(pool.servers[index].authority.clone());
     }
     response
 }
@@ -261,6 +288,7 @@ async fn run() -> io::Result<()> {
             Ok::<_, std::convert::Infallible>(response)
         }
     }));
+    let app = edge::redirect_from_env(app)?;
     let app = live.borrow().policies.apply(app, live.clone());
     let (app, logging) = access_log::configure(app)?;
     let requires_client_addr = logging || live.borrow().policies.requires_client_addr();

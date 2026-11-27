@@ -10,3 +10,4 @@ export RILL
 python3 checks/reload.py
 python3 checks/websocket.py
 python3 checks/sites.py
+python3 checks/edge_routing.py

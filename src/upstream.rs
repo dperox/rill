@@ -198,16 +198,18 @@ impl Health {
 }
 
 impl Pool {
-    pub fn select(self: &Arc<Self>) -> Option<(usize, Option<Lease>)> {
+    pub fn select(self: &Arc<Self>, exclude: Option<usize>) -> Option<(usize, Option<Lease>)> {
         let len = self.servers.len();
         let start = self.next.fetch_add(1, Ordering::Relaxed) % len;
-        if self.healthy.is_empty() && self.active.is_none() {
+        if exclude.is_none() && self.healthy.is_empty() && self.active.is_none() {
             return Some((start, None));
         }
         let mut eligible = (0..len).map(|n| (n + start) % len).filter(|&i| {
-            self.healthy
-                .get(i)
-                .is_none_or(|v: &AtomicBool| v.load(Ordering::Relaxed))
+            Some(i) != exclude
+                && self
+                    .healthy
+                    .get(i)
+                    .is_none_or(|v: &AtomicBool| v.load(Ordering::Relaxed))
         });
         if let Some(active) = &self.active {
             let mut counts = active.lock().unwrap();
