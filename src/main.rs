@@ -1,3 +1,4 @@
+mod access_log;
 mod edge;
 #[cfg(target_os = "linux")]
 mod plain;
@@ -6,6 +7,7 @@ mod reload;
 mod routing;
 #[cfg(target_os = "linux")]
 mod sendfile;
+mod sites;
 mod static_io;
 mod streams;
 mod upstream;
@@ -32,7 +34,6 @@ use std::{
     time::Duration,
 };
 use tokio::net::TcpListener;
-use tower_http::services::ServeDir;
 
 fn error_page(code: StatusCode) -> Response {
     let number = code.as_u16();
@@ -146,8 +147,9 @@ async fn proxy(pool: Arc<Pool>, mut req: Request) -> Response {
         None
     };
     req.headers_mut().insert(header::HOST, peer.host_header());
+    let logging = req.extensions().get::<access_log::Enabled>().is_some();
     let result = tokio::time::timeout(Duration::from_secs(60), pool.client.request(req)).await;
-    match result {
+    let mut response = match result {
         Ok(Ok(response)) if response.status() == StatusCode::SWITCHING_PROTOCOLS => {
             websocket::switch_protocols(response, handshake, lease)
         }
@@ -168,7 +170,11 @@ async fn proxy(pool: Arc<Pool>, mut req: Request) -> Response {
         }
         Ok(Err(_)) => error_page(StatusCode::BAD_GATEWAY),
         Err(_) => error_page(StatusCode::GATEWAY_TIMEOUT),
+    };
+    if logging {
+        response.extensions_mut().insert(peer.authority.clone());
     }
+    response
 }
 
 fn main() -> io::Result<()> {
@@ -205,36 +211,59 @@ fn main() -> io::Result<()> {
         .block_on(run())
 }
 
+enum Target {
+    Proxy(Arc<Pool>),
+    Static(sites::Site),
+}
+
 async fn run() -> io::Result<()> {
-    let root = PathBuf::from(env::var_os("DOCUMENT_ROOT").unwrap_or_else(|| "public".into()))
-        .canonicalize()?;
-    if !root.is_dir() {
-        return Err(io::Error::other("DOCUMENT_ROOT must be a directory"));
-    }
     let stream_chunk = static_io::stream_chunk_bytes()?;
-    let asset_cache = static_io::AssetCache::from_env()?;
-    let files = ServeDir::new(&root).with_buf_chunk_size(stream_chunk);
-    let root = Arc::new(root);
-    let (live, tls_address) = reload::start()?;
+    let root = PathBuf::from(env::var_os("DOCUMENT_ROOT").unwrap_or_else(|| "public".into()));
+    let default_site = sites::Site::open(&root, stream_chunk)?;
+    let (live, tls_address) = reload::start(stream_chunk)?;
     let routes = live.clone();
     let app = Router::new().fallback_service(tower::service_fn(move |req: Request| {
-        let pool = routing::pick(&routes.borrow().routes, &req);
-        let files = files.clone();
-        let root = root.clone();
-        let cache = asset_cache.clone();
+        let generation = routes.borrow();
+        let pool = routing::pick(&generation.routes, &req);
+        let target = if let Some(pool) = pool {
+            Target::Proxy(pool)
+        } else {
+            let matched = if generation.sites.is_empty() {
+                None
+            } else {
+                routing::authority(&req).and_then(|host| {
+                    generation
+                        .sites
+                        .iter()
+                        .find(|(name, _)| host.host().eq_ignore_ascii_case(name))
+                })
+            };
+            Target::Static(matched.map_or(&default_site, |(_, site)| site).clone())
+        };
         async move {
             let response = if static_io::has_repeated_condition(req.headers()) {
                 error_page(StatusCode::BAD_REQUEST)
-            } else if let Some(pool) = pool {
-                proxy(pool, req).await
             } else {
-                static_io::serve_static(root, files, stream_chunk, cache, req).await
+                match target {
+                    Target::Proxy(pool) => proxy(pool, req).await,
+                    Target::Static(site) => {
+                        static_io::serve_static(
+                            site.root,
+                            site.files,
+                            stream_chunk,
+                            site.cache,
+                            req,
+                        )
+                        .await
+                    }
+                }
             };
             Ok::<_, std::convert::Infallible>(response)
         }
     }));
     let app = live.borrow().policies.apply(app, live.clone());
-    let requires_client_addr = live.borrow().policies.requires_client_addr();
+    let (app, logging) = access_log::configure(app)?;
+    let requires_client_addr = logging || live.borrow().policies.requires_client_addr();
     #[cfg(target_os = "linux")]
     let compression = live.borrow().policies.compression_enabled();
     let address = env::var("LISTEN").unwrap_or_else(|_| {

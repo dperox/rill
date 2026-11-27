@@ -9,6 +9,7 @@ These environment settings apply to the HTTP listeners. All settings below defau
 | `RATE_LIMIT` | Maximum requests per second per peer IP, in process-local fixed one-second windows. A zero value disables the limit. Excess requests receive HTTP 429 with `Retry-After: 1`. |
 | `COMPRESS` | Set to `1` to enable negotiated gzip or `0` to disable it. |
 | `CACHE_COALESCE` | Set to `1` with a positive `CACHE_TTL` to combine simultaneous eligible misses for the same cache key. |
+| `RILL_ACCESS_LOG` | Set to `1` to log HTTP requests as JSON on stderr or `0` to disable. [Record fields](#access-logging) |
 | `CACHE_TTL` | Maximum time in seconds Rill will keep eligible upstream responses. A zero value disables caching. |
 
 Access and rate policies use the connected peer IP. IPv4-mapped IPv6 addresses are normalized to IPv4. Forwarded address headers have no effect. The access check runs before rate limiting, and static requests, proxy requests and cache hits share the same per-peer limit. The limiter tracks up to 16,384 distinct addresses per window and returns HTTP 429 to further untracked addresses until the next window.
@@ -31,3 +32,15 @@ When coalescing is enabled, up to 16 distinct cache keys can have an active fill
     python3 checks/policy.py
 
 The socket checks cover cache hits, expiry, request and response bypasses, write invalidation, gzip and range behavior, per-peer rate limits, and IP rules.
+
+## Access logging
+
+Start Rill with `RILL_ACCESS_LOG=1` to write one JSON record to stderr when the HTTP handler returns response headers. The default is off. Select records with `event` equal to `access` to distinguish them from startup and reload messages.
+
+For example, a failed backend connection can produce this record:
+
+```json
+{"event":"access","unix_ms":1795712400000,"client_ip":"127.0.0.1","method":"GET","host":"app.example","path":"/api/orders","status":502,"header_latency_us":317,"upstream":"127.0.0.1:9001"}
+```
+
+`unix_ms` is the time the handler returned the response headers. `client_ip` is the connected peer, and `host` is the request hostname without its port. `upstream` identifies the authority used for a backend attempt. Static responses, proxy cache hits, and policy rejections have a null upstream. The path excludes the query string. Header latency excludes subsequent response-body transfer and WebSocket tunnel lifetime. Logging writes synchronously to stderr, so a slow log consumer can delay requests.

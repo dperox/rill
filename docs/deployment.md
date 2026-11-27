@@ -36,6 +36,20 @@ Make files readable and directories traversable by UID/GID `10001:10001`.
 In Kubernetes, use the custom image or mount a site volume read-only at
 `/app/public`. Set `DOCUMENT_ROOT` if the volume uses a different mount path.
 
+### Serve multiple sites and inspect requests
+
+For the [two-site example](routing.md#per-host-static-sites), put `rill.json`, `build/app/`, and `build/docs/` under a local `config/` directory. Mount the directory so updated configuration and site files are visible inside the container.
+
+```sh
+docker run -d --rm --name rill-sites -p 127.0.0.1:8080:8080 \
+  --mount "type=bind,src=$PWD/config,dst=/etc/rill,readonly" \
+  -e RILL_CONFIG=/etc/rill/rill.json -e RILL_ACCESS_LOG=1 rill:local
+curl -H 'Host: app.example' http://127.0.0.1:8080/
+docker logs rill-sites
+```
+
+After replacing the configuration, run `docker kill --signal=HUP rill-sites` and check the logs for acceptance or rejection. Stop the example with `docker stop rill-sites`.
+
 ### Proxy HTTP
 
 If an HTTP backend named `api` is attached to Docker network `app-net` and

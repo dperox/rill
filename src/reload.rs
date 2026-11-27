@@ -1,10 +1,11 @@
 //! Publish routes and both TLS transports as one validated configuration.
-use crate::{edge, policy, routing};
+use crate::{edge, policy, routing, sites};
 use serde::Deserialize;
 use std::{env, fs, io, path::PathBuf, sync::Arc};
 use tokio::sync::watch;
 
 pub struct Generation {
+    pub sites: Vec<(String, sites::Site)>,
     pub policies: policy::Policies,
     pub routes: Vec<routing::Route>,
     pub tls: Option<Arc<edge::Credentials>>,
@@ -15,6 +16,8 @@ pub type Live = watch::Receiver<Generation>;
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileConfig {
+    #[serde(default)]
+    sites: Vec<sites::Definition>,
     routes: Option<Vec<routing::Definition>>,
     tls: Option<PemPaths>,
 }
@@ -28,6 +31,7 @@ struct PemPaths {
 
 struct Source {
     path: Option<PathBuf>,
+    chunk: usize,
     secure: bool,
 }
 
@@ -37,6 +41,12 @@ impl Source {
             Some(path) => serde_json::from_slice(&fs::read(path)?).map_err(io::Error::other)?,
             None => FileConfig::default(),
         };
+        let base = self
+            .path
+            .as_deref()
+            .and_then(|p| p.parent())
+            .unwrap_or(std::path::Path::new("."));
+        let sites = sites::load(file.sites, base, self.chunk)?;
         let paths = if let Some(paths) = file.tls {
             let directory = self.path.as_ref().unwrap().parent().unwrap();
             Some((directory.join(paths.cert), directory.join(paths.key)))
@@ -64,6 +74,7 @@ impl Source {
         let policies = policy::Policies::from_env()?;
         let routes = routing::load(definitions, &policies)?;
         Ok(Generation {
+            sites,
             routes,
             tls,
             policies,
@@ -71,7 +82,7 @@ impl Source {
     }
 }
 
-pub fn start() -> io::Result<(Live, Option<String>)> {
+pub fn start(chunk: usize) -> io::Result<(Live, Option<String>)> {
     let address = env::var_os("TLS_LISTEN")
         .map(|s| {
             s.into_string()
@@ -80,6 +91,7 @@ pub fn start() -> io::Result<(Live, Option<String>)> {
         .transpose()?;
     let source = Arc::new(Source {
         path: env::var_os("RILL_CONFIG").map(PathBuf::from),
+        chunk,
         secure: address.is_some(),
     });
     #[cfg(unix)]

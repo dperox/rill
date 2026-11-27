@@ -117,18 +117,7 @@ pub fn pick(routes: &[Route], req: &Request) -> Option<Arc<Pool>> {
             continue;
         }
         if let Some(expected) = &route.host {
-            let authority = req.uri().authority().or_else(|| {
-                host_header
-                    .get_or_init(|| {
-                        req.headers()
-                            .get(header::HOST)?
-                            .to_str()
-                            .ok()?
-                            .parse::<Authority>()
-                            .ok()
-                    })
-                    .as_ref()
-            });
+            let authority = host_header.get_or_init(|| authority(req)).as_ref();
             if !authority.is_some_and(|a| a.host().eq_ignore_ascii_case(expected)) {
                 continue;
             }
@@ -136,4 +125,11 @@ pub fn pick(routes: &[Route], req: &Request) -> Option<Arc<Pool>> {
         return Some(route.pool.clone());
     }
     None
+}
+
+pub fn authority(req: &Request) -> Option<Authority> {
+    req.uri()
+        .authority()
+        .cloned()
+        .or_else(|| req.headers().get(header::HOST)?.to_str().ok()?.parse().ok())
 }

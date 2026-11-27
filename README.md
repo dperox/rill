@@ -1,6 +1,6 @@
 # Rill
 
-Rill is a Rust web server, reverse proxy and load balancer. A single executable serves static files, routes HTTP requests to application servers, terminates TLS for HTTP/1.1, HTTP/2 and HTTP/3, and forwards TCP connections and UDP datagrams. Use environment variables for startup settings and an optional file for live HTTP route and certificate updates. Its HTTP regression suite checks response status, headers and body bytes using Rust Anything.
+Rill is a Rust web server, reverse proxy and load balancer. A single executable serves static files, routes HTTP requests to application servers, terminates TLS for HTTP/1.1, HTTP/2 and HTTP/3, and forwards TCP connections and UDP datagrams. Use environment variables for startup settings and an optional file for live updates to HTTP routes, per-host static roots, and TLS credentials. Its HTTP regression suite checks response status, headers and body bytes using Rust Anything.
 
 ## Run from source
 
@@ -50,9 +50,12 @@ A request for `/api/products?limit=5` reaches the backend with that path and que
 | --- | --- |
 | Serve files and cache versioned assets | `DOCUMENT_ROOT`, `RILL_SENDFILE`, `RILL_STATIC_CHUNK_KIB`, `RILL_ASSET_CACHE_ENTRIES`. [Static file settings](docs/static-io.md) |
 | Route HTTP and balance backends | `UPSTREAMS`, `RILL_ROUTES`, `RILL_HTTP_BALANCE`. [HTTP routing](docs/routing.md) |
-| Reload HTTP routes and certificates on Unix | Set `RILL_CONFIG` to a JSON file and send `SIGHUP`. [Graceful reloads](docs/reload.md) |
+| Serve independent sites on one listener | Add exact hostnames and document roots to the `sites` array in `RILL_CONFIG`. [Per-host static sites](docs/routing.md#per-host-static-sites) |
+| Inspect HTTP requests and backend failures | Set `RILL_ACCESS_LOG=1` for JSON access records on stderr. [Access logging](docs/policy.md#access-logging) |
+| Reload routes, sites and certificates on Unix | Set `RILL_CONFIG` to a JSON file and send `SIGHUP`. [Graceful reloads](docs/reload.md) |
+| Verify upstream readiness and identity | Configure TCP or HTTP probes with `RILL_HEALTH_INTERVAL_SECS` and `RILL_HEALTH_PATH`. HTTPS pools support a private CA and client certificates. [Upstream configuration](docs/routing.md#upstream-https-and-mutual-tls) |
 | Enable HTTPS and QUIC | Set `TLS_LISTEN` and supply the server certificate and key. HTTP/3 uses UDP on the same port as HTTPS over TCP. [TLS and protocol checks](docs/edge.md) |
-| Cache proxy responses, compress or limit requests | `CACHE_TTL`, `COMPRESS`, `RATE_LIMIT`, `ALLOW_IPS`, `DENY_IPS`. [HTTP policies](docs/policy.md) |
+| Cache proxy responses, compress or limit requests | `CACHE_TTL`, `CACHE_COALESCE`, `COMPRESS`, `RATE_LIMIT`, `ALLOW_IPS`, `DENY_IPS`. [HTTP policies](docs/policy.md) |
 | Forward TCP, UDP or mail to backends | `RILL_TCP_LISTENERS`, `RILL_UDP_LISTENERS`, `RILL_STREAM_BALANCE`. [Transport configuration](docs/streams.md) |
 
 Rill defaults to **one blocking worker** for filesystem operations and DNS. Set `RILL_BLOCKING_THREADS` to override it. Async network workers default to the available CPU count and can be set independently with `TOKIO_WORKER_THREADS`. [Runtime and storage tuning](docs/static-io.md)

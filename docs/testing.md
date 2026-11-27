@@ -12,7 +12,7 @@ export RILL="$PWD/target/release/rill"
 
 ## HTTP regression checks
 
-Build Rust Anything to replay Rill’s committed HTTP expectations.
+Build Rust Anything to replay Rill's committed HTTP expectations.
 
 ```sh
 git clone https://github.com/erkamyaman/rust-anything.git ../rust-anything-toolchain
@@ -31,7 +31,7 @@ python3 checks/upstreams.py
 python3 checks/static_sizes.py
 ```
 
-The main suite replays 56 HTTP/1.1 requests against Rill and compares status, selected headers and body bytes with the committed fixtures. The responses were recorded directly from Rill using the project’s sample files and loopback test backends. It covers file lookup and errors, GET and HEAD, single byte ranges, conditional requests, and proxy methods, payloads and round-robin selection. Edit the inputs and expected responses together when intentionally changing the HTTP contract. Rust Anything skips some headers, including ETag, Last-Modified and Content-Length. The static size check verifies these headers directly.
+The main suite replays 56 HTTP/1.1 requests against Rill and compares status, selected headers and body bytes with the committed fixtures. The responses were recorded directly from Rill using temporary files with fixed contents and timestamps and loopback test backends. It covers file lookup and errors, GET and HEAD, single byte ranges, conditional requests, and proxy methods, payloads and round-robin selection. Edit the inputs and expected responses together when intentionally changing the HTTP contract. Rust Anything skips some headers, including ETag, Last-Modified and Content-Length. The static size check verifies these headers directly.
 
 Set `RILL` to select the binary. The scripts default to `target/debug/rill`. To check both Linux file-serving modes, run:
 
@@ -57,6 +57,6 @@ These checks start loopback listeners and temporary fixtures. The sendfile and a
 
 ## Feature acceptance
 
-Run `./checks/features.sh` from Linux or WSL. It builds a locked debug binary, then runs the reload and WebSocket acceptance checks against that binary. Set `RILL` to an absolute binary path to test an existing build instead.
+Run `./checks/features.sh` from Linux or WSL. It builds a locked debug binary, then runs the reload, WebSocket, static site and access log acceptance checks against that binary. Set `RILL` to an absolute binary path to test an existing build instead.
 
-Both checks use loopback connections and temporary fixtures. With the optional HTTP/3 dependencies from the [TLS guide](edge.md#local-protocol-check), run `python3 checks/reload.py --http3` to check QUIC routing and certificate rotation too. The [feature guide](features.md) describes the client and operator behaviors they verify.
+These checks use loopback connections and temporary fixtures. With the optional HTTP/3 dependencies from the [TLS guide](edge.md#local-protocol-check), run `python3 checks/reload.py --http3` to check QUIC routing and certificate rotation too. The [feature guide](features.md) describes the client and operator behaviors they verify.
