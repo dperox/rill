@@ -51,6 +51,18 @@ comparison pair. Run `--workload static` and `--workload proxy` separately
 with a 4096-byte payload. Set `RILL_BLOCKING_THREADS` to
 the number of frontend cores for each run.
 
+### Choosing the two-core default
+
+With the frontend pinned to CPUs 4 and 2, two network workers handled 82,434
+static requests/s and 43,607 proxied requests/s. One network worker handled
+33,902 and 24,459 respectively. Both settings used the same build at
+`7f87daf`, two blocking workers, 4 KiB responses and 64 connections. These
+medians cover three alternating four-second rounds after two-second warmups.
+The automatic default therefore uses both workers on a pinned pair. The
+two-CPU quota in the Kubernetes lab favored a single worker.
+[Native rounds](worker-defaults-native.csv) and
+[Kubernetes default comparison](kubernetes/README.md#automatic-worker-defaults).
+
 ## One frontend core
 
 Rill served about 10% more requests per second for a 4 KiB static file. For a

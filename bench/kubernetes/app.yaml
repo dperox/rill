@@ -289,10 +289,6 @@ spec:
           value: 0.0.0.0:8080
         - name: DOCUMENT_ROOT
           value: /srv/fixtures
-        - name: TOKIO_WORKER_THREADS
-          value: '2'
-        - name: RILL_BLOCKING_THREADS
-          value: '2'
         - name: RILL_ASSET_CACHE_ENTRIES
           value: '0'
         - name: RILL_HEALTH_INTERVAL_SECS

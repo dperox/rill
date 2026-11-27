@@ -21,6 +21,31 @@ Services every two seconds. A rolling update replaces one Rill replica at a
 time while keeping three available. A PodDisruptionBudget allows one voluntary
 eviction.
 
+## Automatic worker defaults
+
+On this cluster each Rill pod had a two-CPU quota and could run across a
+wider set of CPUs. Both Rill images ran with the two worker environment
+variables unset. The previous build used two network workers and one blocking
+worker. All three pods running the new build reported one network worker and
+a limit of two blocking workers. The CPU quota, replica count, ingress,
+origins and traffic mix were the same. [Worker selection change](https://github.com/dperox/rill/commit/2bc8e16)
+
+| Workload | Connections | Previous req/s | New req/s | NGINX req/s | Previous p95 | New p95 | NGINX p95 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Static 4 KiB | 64 | 30,985 | 36,744 | 32,275 | 3.99 ms | 3.47 ms | 4.03 ms |
+| Proxied download 256 KiB | 64 | 9,427 | 11,008 | 10,219 | 12.16 ms | 10.48 ms | 10.59 ms |
+| Mixed | 64 | 23,275 | 27,550 | 25,940 | 5.38 ms | 4.50 ms | 4.60 ms |
+| Mixed | 256 | 24,523 | 28,233 | 26,309 | 20.27 ms | 17.63 ms | 19.03 ms |
+
+The new defaults served 18.4% more mixed requests per second at 64 connections
+and 15.1% more at 256. In this lab they exceeded NGINX throughput by 6.2% and
+7.3% respectively.
+
+These are medians of three ten-second rounds per workload with three-second
+warmups. We ran the previous defaults first, then alternated the new build and
+NGINX 1.30.8. All 8,643,767 measured responses passed validation with zero
+transport errors. [All 36 rounds](worker-defaults-rounds.csv)
+
 ## Linux worker scheduling
 
 We kept two network workers, two blocking workers and a two-CPU limit per
@@ -169,6 +194,9 @@ bench/kubernetes/deploy.sh "$lab"
 curl --noproxy '*' --resolve rill-bench:18443:127.0.0.1 --cacert "$lab/tls.pem" \
   --fail --silent --show-error https://rill-bench:18443/api/payload.bin | cmp - "$lab/api.bin"
 
+# Match the explicit worker counts in the historical v0.1.0 runs.
+kubectl -n rill-bench set env deploy/rill TOKIO_WORKER_THREADS=2 RILL_BLOCKING_THREADS=2
+kubectl -n rill-bench rollout status deploy/rill
 python3 bench/kubernetes/run.py "$lab" --cpus 16,18,20,22,24,26,28,30
 python3 bench/kubernetes/run.py "$lab" --cpus 16,18,20,22,24,26,28,30 --seconds 60 --rollout
 ```
@@ -209,6 +237,28 @@ python3 bench/kubernetes/run.py "$lab/$rev" --seconds 10 --warmup 3 --compare-ng
 kubectl -n rill-bench set image deploy/rill "rill=$original"
 kubectl -n rill-bench rollout status deploy/rill
 python3 bench/kubernetes/run.py "$lab/release" --seconds 10 --warmup 3
+```
+
+For the automatic-default comparison, use the build and kind image-loading
+commands above for both `7f87daf` and `2bc8e16`. Remove the two historical
+overrides before running either image.
+
+```sh
+kubectl -n rill-bench set env deploy/rill TOKIO_WORKER_THREADS- RILL_BLOCKING_THREADS-
+for rev in 7f87daf 2bc8e16; do
+  kubectl -n rill-bench set image deploy/rill "rill=localhost/rill:scheduling-$rev"
+  kubectl -n rill-bench rollout status deploy/rill
+  state="$lab/defaults-$rev"
+  mkdir -p "$state"
+  cp "$lab/hosts" "$state/hosts"
+  if [ "$rev" = 2bc8e16 ]; then
+    python3 bench/kubernetes/run.py "$state" --seconds 10 --warmup 3 --compare-nginx
+  else
+    python3 bench/kubernetes/run.py "$state" --seconds 10 --warmup 3
+  fi
+done
+kubectl -n rill-bench set image deploy/rill "rill=$original"
+kubectl -n rill-bench rollout status deploy/rill
 ```
 
 To reproduce a scheduler trace, run the following with each image while its

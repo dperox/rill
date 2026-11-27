@@ -27,17 +27,31 @@ accept from the same listening socket and drive I/O for its own connections.
 A client stays on that worker for the lifetime of its connection. Routes,
 health checks and application caches are shared across workers.
 
-For a two-CPU Linux pod behind an ingress, setting `TOKIO_WORKER_THREADS=2`
-and `RILL_BLOCKING_THREADS=2` enables this layout on the single plaintext
-direct-file listener. Rill splits the blocking budget between the two workers.
+Rill selects worker counts at startup. For a single Linux plaintext listener
+with direct file delivery enabled, the defaults depend on the CPU allocation
+and workload.
 
-With more than two network workers, Rill also uses this layout for a static
-server that has at least one blocking worker per network worker, no upstream
-routes, and no `RILL_CONFIG` file that could add routes on reload. Larger
-proxy deployments use the shared runtime. Compression, additional TLS,
-stream or static listeners, and a smaller blocking budget also select the
-shared runtime.
-[Scheduling measurements](../bench/kubernetes/README.md#linux-worker-scheduling)
+| CPU allocation and workload | Network workers | Maximum blocking workers |
+|---|---:|---:|
+| Two CPUs of quota shared across a wider set of CPUs, as in the ingress lab | 1 | 2 |
+| Pinned to two CPUs, serving files or proxying requests | 2 | 2 |
+| Three or four CPUs, serving files without upstream routes or a reloadable config file | One per available CPU | One per network worker |
+| Four CPUs, with upstream routes or a reloadable config file | 4 | 1 |
+
+Rill reads the available parallelism and, for the two-CPU decision, the Linux
+thread affinity mask. If it cannot read that mask, it uses two network workers.
+Other automatic configurations use the available CPU count and one blocking
+worker. TLS, compression, disabled direct file delivery and additional
+listeners use the general runtime settings.
+
+Set `TOKIO_WORKER_THREADS` or `RILL_BLOCKING_THREADS` independently to
+override either count. With two or more network workers, the independent
+I/O workers need a blocking budget of at least one per network worker.
+Larger proxies and file-configured servers with more than two workers use
+the shared scheduler, which lets a reload add upstream routes. Rill reports
+both worker counts in its startup log.
+[Default-setting benchmarks](../bench/kubernetes/README.md#automatic-worker-defaults)
+and [native multicore measurements](../bench/http-kit-static.md#linux-worker-scheduling-after-v010).
 
 See the [Rill vs. NGINX benchmarks](../bench/http-kit-static.md) and
 [static file settings](static-io.md).

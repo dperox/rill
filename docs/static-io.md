@@ -50,8 +50,9 @@ improve throughput and increase memory held by clients with downloads in
 flight. Compare settings at representative file sizes and client concurrency.
 
 `RILL_BLOCKING_THREADS` sets the process-wide limit on blocking workers for
-filesystem tasks and DNS lookups. It defaults to one and accepts a positive
-integer from 1 to 65535. The Linux plaintext scheduler can divide that budget
-among network workers. A larger pool can handle more concurrent slow
+filesystem tasks and DNS lookups. It accepts a positive integer from 1 to
+65535. The default is one on the general runtime. The Linux plaintext
+scheduler selects up to four blocking workers automatically for the CPU
+allocations and workloads described in the worker scheduling guide. A larger pool can handle more concurrent slow
 operations and use more memory. [Worker scheduling](hyper.md#linux-http-worker-scheduling)
 and [benchmark guide](../bench/README.md).
