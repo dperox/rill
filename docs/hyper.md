@@ -20,6 +20,5 @@ limits individual sendfile calls to 1 MiB and falls back to positional reads on
 unsupported filesystems. Upgrades transfer any read-ahead bytes to the tunnel
 and hold the upstream lease until relay completion.
 
-The previous Hyper fork is documented at revision `351ace3`. See the
-[shared-port measurements](../bench/http-kit-static.md) and
+See the [Rill vs. NGINX benchmarks](../bench/http-kit-static.md) and
 [static file settings](static-io.md).

@@ -6,7 +6,7 @@ Rill is an open-source alternative to NGINX, written in Rust. It sits at the fro
 
 A web server handles requests from strangers all day. A mistake as small as reading past the end of a message can expose someone else’s data. Rill uses Rust because its memory-safety checks help prevent this kind of bug. HTTPS keeps traffic encrypted on its way to and from your site.
 
-Rill’s goal is to keep sites fast as they grow, while using less memory and keeping setup simple. One program can serve your files and route traffic to your app. It supports modern web standards like HTTP/3, and you can start with a folder of files and add routing rules when you need them. [Performance measurements](bench/http-kit-static.md)
+Rill’s goal is to keep sites fast as they grow, while using less memory and keeping setup simple. One program can serve your files and route traffic to your app. It supports modern web standards like HTTP/3, and you can start with a folder of files and add routing rules when you need them. [Rill vs. NGINX benchmarks](bench/http-kit-static.md)
 
 ## Try it
 

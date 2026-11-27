@@ -1,86 +1,58 @@
-# Fork-free HTTP/1 file delivery
+# Rill vs. NGINX
 
-## Shared plaintext port
+Rill served about 10% more requests per second for a 4 KiB static file. For a
+256 KiB static file, the two servers finished within 0.2% of each other.
+The biggest difference appeared when forwarding a 256 KiB response from an
+application: Rill handled more requests and used more frontend memory.
 
-The main listener serves static files, proxied requests and WebSocket upgrades
-on one port. Both builds below ran on the same WSL2 host and CPU placements
-as the original experiment, with 64 clients, three alternating rounds and
-validated bodies. The baseline is the patched Hyper build at `351ace3`.
+| Workload | Rill req/s | NGINX req/s | Rill p95 | NGINX p95 |
+|---|---:|---:|---:|---:|
+| Serve a 4 KiB file | 31,637 | 28,890 | 2.38 ms | 2.61 ms |
+| Serve a 256 KiB file | 17,709 | 17,738 | 4.08 ms | 4.03 ms |
+| Proxy a 4 KiB response | 24,240 | 23,119 | 3.12 ms | 3.08 ms |
+| Proxy a 256 KiB response | 9,740 | 2,603 | 7.88 ms | 44.15 ms |
 
-| Workload | Shared port | Patched Hyper |
-|---|---:|---:|
-| 4 KiB requests/s | 31,509 | 29,498 |
-| 4 KiB p95 | 2.381 ms | 2.737 ms |
-| 256 KiB requests/s | 17,079 | 15,867 |
-| 256 KiB p95 | 4.307 ms | 5.518 ms |
-| Idle process RSS, 4,096 static keep-alive clients | 22.79 MiB | 32.59 MiB |
+Requests per second measures throughput. The p95 is the time within which
+95% of requests finished. Each entry is the median of three rounds.
+[Individual rounds, memory use and response counts](nginx-rounds.csv)
 
-All idle connections returned the expected 4 KiB body before and after the
-five-second wait. Connections running the full streaming driver retain a
-larger state. The idle figure measures the compact GET path. To reproduce
-the shared-port figures with the commands below, use `target/release/rill`
-in place of `bench/kit-static-listener`.
+## Why the proxy settings matter
 
-On one connection, Linux strace recorded a 262,144-byte sendfile before a
-proxied POST and a second 262,144-byte sendfile after it. Forcing sendfile to
-return EINVAL also passed the byte checks through the buffered fallback.
-Native Windows passed its pipeline, two-slot saturation, reset, range,
-validator and gzip tests with TransmitFile enabled.
+Both frontends reused HTTP/1.1 connections to the same Rill origin. NGINX used
+its default response buffering and logged temporary-file use during the
+256 KiB test. Rill streamed the response. Median peak frontend memory for
+that workload was **41.3 MiB for Rill and 11.0 MiB for NGINX**. At 4 KiB,
+both used about 10 MiB and had similar latency. Different buffer settings,
+network speeds or concurrency can change these results.
 
-## Original dedicated-listener experiment
+## Test setup
 
+Rill v0.1.0 (release build) and NGINX 1.30.8 ran natively on Ubuntu under
+WSL2 on an AMD Ryzen 9 9950X3D. Each frontend ran alone during its turn on
+CPU 4 with one network worker. The origin ran on CPU 6. Four load-generator
+threads on CPUs 8, 10, 12 and 14 kept 64 plaintext HTTP/1.1 connections open.
+Files were warm in the OS cache. Both servers used sendfile for eligible
+static responses. Access logs, compression and application caches were off.
 
-Historical results for prototype commit `445eaa1`. Base: Rill `351ace3`. Stock Hyper 1.13.0 serves the regular listener. Set
-`RILL_STATIC_LISTEN` to bind an additional plaintext HTTP/1 static listener
-driven by http-kit-h1 0.6.2. Both use the existing router, static-file
-selection and middleware. The dedicated listener handles bodyless GET and HEAD
-and returns 404 for a matched proxy route. Its connections run on one Tokio
-LocalSet. This Linux experiment does not implement Windows TransmitFile or a
-single-port replacement. The original fork-specific initial allocations are
-absent.
+Each round had two seconds of warmup and three seconds of measurement.
+The driver alternated server order and checked the status and complete body
+of every response. These tests cover single-core loopback traffic. TLS,
+cold storage and multi-core scaling need separate measurements.
 
-```sh
+## Reproduce it
+
+Use Linux, a release Rust toolchain, Python 3, NGINX, `taskset` and a
+Lua-enabled `wrk`. Run from the repository root and adjust the CPU numbers
+to distinct available cores on your machine.
+
+```bash
 cargo build --release --locked
-DOCUMENT_ROOT=public LISTEN=127.0.0.1:8080 RILL_STATIC_LISTEN=127.0.0.1:8081 target/release/rill
-```
-
-### Measurements
-
-WSL2, Ryzen 9 9950X3D, warm named files, 64 concurrent HTTP/1.1 clients,
-one frontend worker/core, client CPUs 8, 10, 12, 14. Three alternating rounds
-with two seconds of warmup and three seconds measured. All response bodies
-were checked. Entries below are medians.
-
-| File | Driver | Requests/s | p95 ms | Peak frontend RSS MiB |
-|---|---|---:|---:|---:|
-| 256 KiB | http-kit | 16,025 | 5.367 | 9.23 |
-| 256 KiB | patched Hyper | 15,991 | 5.466 | 7.51 |
-| 4 KiB | http-kit | 23,049 | 4.339 | 9.43 |
-| 4 KiB | patched Hyper | 29,336 | 2.760 | 7.75 |
-
-At 4,096 idle connections, process RSS was 76.07 MiB with http-kit and
-32.60 MiB with patched Hyper. Both retained all connections, served all 8,192
-pre/post-idle responses and used zero measured CPU ticks during five seconds
-idle. The prototype process also holds an unused ordinary listener.
-
-### Reproduce
-
-Build the unmodified base in a separate checkout and set `PATCHED` to the
-absolute path to its release binary. Set `WRK` to a Lua-enabled wrk if it is
-outside PATH. Run from the prototype root on a machine allowing these CPUs.
-
-```sh
-RILL="$PWD/bench/kit-static-listener" python3 checks/sendfile.py
-for size in 262144 4096; do
-  python3 bench/compare.py --rill bench/kit-static-listener --baseline-rill "$PATCHED" \
-    --workload static --server-cpu 4 --backend-cpu 6 --client-cpus 8 10 12 14 \
-    --seconds 3 --payload-bytes "$size"
-done
-for binary in bench/kit-static-listener "$PATCHED"; do
-  python3 bench/connections.py --rill "$binary" --server-cpu 4 --client-cpus 8 10 12 14 --connections 4096
+for bytes in 4096 262144; do
+  python3 bench/compare.py --nginx "$(command -v nginx)" \
+    --payload-bytes "$bytes" --server-cpu 4 --backend-cpu 6 \
+    --client-cpus 8 10 12 14 --connections 64 --warmup 2 --seconds 3 --repeat 3
 done
 ```
 
-The static listener passed the repository sendfile suite in both modes. With
-`strace -f -e trace=sendfile`, a verified 256 KiB GET produced one successful
-262,144-byte sendfile call in mode 1 and no sendfile calls in mode 0.
+The [benchmark driver](compare.py) generates the NGINX configuration and starts
+both servers on temporary ports.

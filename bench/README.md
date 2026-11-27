@@ -1,5 +1,7 @@
 # HTTP benchmarks
 
+[Compare Rill and NGINX on static files and reverse proxy traffic.](http-kit-static.md)
+
 Use [compare.py](compare.py) for throughput, p95 latency and peak front-end RSS,
 and [connections.py](connections.py) for idle persistent connections. The
 [Linux sendfile report](sendfile.md) covers the immutable asset cache, sendfile, and TCP socket settings.

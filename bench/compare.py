@@ -167,6 +167,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rill", default=os.getenv("RILL", REPO / "target/release/rill"))
     comparison = parser.add_mutually_exclusive_group()
+    comparison.add_argument("--nginx", help="path to an NGINX binary to compare on the same frontend CPU")
     comparison.add_argument("--baseline-rill", help="optional earlier Rill binary to benchmark alongside this release")
     comparison.add_argument("--asset-cache-ab", action="store_true", help="compare the Rill asset cache off and on")
     comparison.add_argument("--sendfile-ab", action="store_true", help="compare Rill buffered and direct file delivery")
@@ -201,6 +202,8 @@ def main():
     binaries = ["wrk", "rill"]
     if args.baseline_rill:
         binaries.append("baseline_rill")
+    if args.nginx:
+        binaries.append("nginx")
     for binary in binaries:
         path = shutil.which(getattr(args, binary))
         if not path:
@@ -261,6 +264,44 @@ def main():
                 variants.append(("rill-baseline", args.baseline_rill, {}))
         servers = [(name, p, start_rill(binary, args.server_cpu, p, upstream, **settings))
                    for (name, binary, settings), p in zip(variants, (port, other_port))]
+        if args.nginx:
+            config = root / "nginx.conf"
+            config.write_text(f"""
+daemon off;
+master_process off;
+worker_processes 1;
+pid nginx.pid;
+error_log stderr warn;
+events {{ worker_connections 1024; }}
+http {{
+    access_log off;
+    sendfile on;
+    tcp_nodelay on;
+    client_body_temp_path client_temp;
+    proxy_temp_path proxy_temp;
+    fastcgi_temp_path fastcgi_temp;
+    uwsgi_temp_path uwsgi_temp;
+    scgi_temp_path scgi_temp;
+    upstream origin {{
+        server {upstream};
+        keepalive 128;
+    }}
+    server {{
+        listen 127.0.0.1:{other_port};
+        root "{root}";
+        location /api/ {{
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_pass http://origin;
+        }}
+    }}
+}}
+""")
+            nginx = running.enter_context(process([
+                "taskset", "-c", str(args.server_cpu), args.nginx,
+                "-p", str(root), "-c", str(config), "-e", "stderr",
+            ]))
+            servers.append(("nginx", other_port, nginx))
         print(f"server CPU {args.server_cpu}, backend CPU {args.backend_cpu}, "
               f"client CPUs {args.client_cpus}, {args.connections} connections, "
               f"{args.warmup}s warmup + {args.seconds}s measured", flush=True)
