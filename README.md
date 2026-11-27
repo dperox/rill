@@ -1,88 +1,25 @@
 # Rill
 
-Rill is a Rust web server, reverse proxy and load balancer. A single executable serves static files, routes HTTP requests to application servers, terminates TLS for HTTP/1.1, HTTP/2 and HTTP/3, and forwards TCP connections and UDP datagrams. Use environment variables for startup settings and an optional file for live updates to HTTP routes, per-host static roots, and TLS credentials. Its HTTP regression suite checks response status, headers and body bytes using Rust Anything.
+Rill is an open-source alternative to NGINX, written in Rust. It sits at the front door of your website. When someone asks for a photo, Rill can send the file itself. When they ask what’s in their shopping cart, Rill passes the request to your app and brings the answer back. If several servers run your app, Rill can share the work among them.
 
-## Prompt for an AI agent
+## Why Rill?
 
-```text
-Read and follow Rill's AGENTS.md at https://github.com/dperox/rill/blob/main/AGENTS.md
-```
+A web server handles requests from strangers all day. A mistake as small as reading past the end of a message can expose someone else’s data. Rill uses Rust because its memory-safety checks help prevent this kind of bug. HTTPS keeps traffic encrypted on its way to and from your site.
 
-## Run from source
+Rill’s goal is to keep sites fast as they grow, while using less memory and keeping setup simple. One program can serve your files and route traffic to your app. It supports modern web standards like HTTP/3, and you can start with a folder of files and add routing rules when you need them. [Performance measurements](bench/http-kit-static.md)
 
-Build natively on Linux or macOS with stable Rust, Cargo, a C compiler and a linker. On macOS, the Xcode Command Line Tools provide the compiler and linker (`xcode-select --install`). On Windows, you can run the Linux commands inside a WSL2 distribution. The default site is `public/`, resolved relative to the process working directory.
+## Try it
 
-```sh
-git clone https://github.com/dperox/rill.git
-cd rill
-cargo build --release --locked
-./target/release/rill
-```
-
-In another terminal, run `curl -i http://127.0.0.1:8080/`. The sample page says **Rill is running**. To serve your own site, set `DOCUMENT_ROOT` to an existing directory. `LISTEN` sets the bind address. When it is unset, Rill binds to loopback and uses `PORT`, which defaults to 8080.
-
-On Windows hosts, Rill also runs as a native executable. See the [Windows deployment and verification steps](docs/deployment.md#native-windows).
-
-## Run with Docker or Kubernetes
-
-Run the release image on localhost. It includes the sample site and runs as UID 10001.
+Run the sample site with Docker:
 
 ```sh
 docker run --rm -p 127.0.0.1:8080:8080 ghcr.io/dperox/rill:0.1.0
 ```
 
-For Kubernetes, deploy two replicas and access the ClusterIP Service:
+Open <http://127.0.0.1:8080/> to see **Rill is running**. You can also download a Linux or Windows executable. [Downloads](https://github.com/dperox/rill/releases/latest) · [Deployment guide](docs/deployment.md)
 
-```sh
-kubectl apply -f https://raw.githubusercontent.com/dperox/rill/v0.1.0/deploy/kubernetes.yaml
-kubectl rollout status deployment/rill
-kubectl port-forward service/rill 8080:8080
-```
+## Already using NGINX?
 
-Choose a free local port if another Rill instance is running. For bind mounts, registry images, TLS, and optional transport listeners, see the [deployment guide](docs/deployment.md).
+Rill can read your NGINX configuration, suggest a starting configuration, and flag settings that need your review. [Migration guide](docs/migration.md)
 
-## Proxy an application
-
-With an HTTP application listening on port 9001, start Rill with the following settings. Run one Rill frontend per listen address.
-
-```sh
-UPSTREAMS=127.0.0.1:9001 ./target/release/rill
-```
-
-A request for `/api/products?limit=5` reaches the backend with that path and query and `Host: backend`. Other paths still serve the document root. Add comma-separated upstreams for round-robin balancing, or use `RILL_ROUTES` for host and path-prefix rules. HTTP/1.1 WebSocket upgrades use the same routes. HTTPS and mutual TLS upstreams and active health checks are optional. [Routing examples](docs/routing.md)
-
-## Migrating from NGINX
-
-Run `rill migrate nginx` on the stdout of `nginx -T` for a JSON candidate and source-located diagnostics. Run `rill config test` with the intended deployment environment to validate the Rill configuration before opening listeners. [Migration commands and agent contract](docs/migration.md)
-
-## Configuration
-
-| Task | Settings and guide |
-| --- | --- |
-| Serve files and cache versioned assets | `DOCUMENT_ROOT`, `RILL_SENDFILE`, `RILL_STATIC_CHUNK_KIB`, `RILL_ASSET_CACHE_ENTRIES`. [Static file settings](docs/static-io.md) |
-| Route HTTP and balance backends | `UPSTREAMS`, `RILL_ROUTES`, `RILL_HTTP_BALANCE`. [HTTP routing](docs/routing.md) |
-| Serve independent sites on one listener | Add exact hostnames and document roots to the `sites` array in `RILL_CONFIG`. [Per-host static sites](docs/routing.md#per-host-static-sites) |
-| Inspect HTTP requests and backend failures | Set `RILL_ACCESS_LOG=1` for JSON access records on stderr. [Access logging](docs/policy.md#access-logging) |
-| Reload routes, sites and certificates on Unix | Set `RILL_CONFIG` to a JSON file and send `SIGHUP`. [Graceful reloads](docs/reload.md) |
-| Verify upstream readiness and identity | Configure TCP or HTTP probes with `RILL_HEALTH_INTERVAL_SECS` and `RILL_HEALTH_PATH`. HTTPS pools support a private CA and client certificates. [Upstream configuration](docs/routing.md#upstream-https-and-mutual-tls) |
-| Redirect plaintext traffic and serve per-host certificates | Set `RILL_HTTPS_REDIRECT` and configure `tls.hosts` for SNI. [HTTPS configuration](docs/edge.md) |
-| Retry a failed backend connection | Enable `failover` on selected HTTP routes. [Failover scope](docs/routing.md#connection-failover) |
-| Enable HTTPS and QUIC | Set `TLS_LISTEN` and supply the server certificate and key. HTTP/3 uses UDP on the same port as HTTPS over TCP. [TLS and protocol checks](docs/edge.md) |
-| Cache proxy responses, compress or limit requests | `CACHE_TTL`, `CACHE_COALESCE`, `COMPRESS`, `RATE_LIMIT`, `ALLOW_IPS`, `DENY_IPS`. [HTTP policies](docs/policy.md) |
-| Forward TCP, UDP or mail to backends | `RILL_TCP_LISTENERS`, `RILL_UDP_LISTENERS`, `RILL_STREAM_BALANCE`. [Transport configuration](docs/streams.md) |
-
-Rill defaults to **one blocking worker** for filesystem operations and DNS. Set `RILL_BLOCKING_THREADS` to override it. Async network workers default to the available CPU count and can be set independently with `TOKIO_WORKER_THREADS`. [Runtime and storage tuning](docs/static-io.md)
-
-## Verification and performance
-
-`cargo test --locked` runs the Rust unit tests. The [testing guide](docs/testing.md) covers the HTTP and transport integration suites, including how to replay the 56 recorded HTTP cases. The [implementation notes](docs/crates.md) describe the Rust dependencies and HTTP transports.
-
-On Linux, Rill can use sendfile and cache immutable assets. Windows uses TransmitFile by default for large plaintext downloads. macOS uses buffered file delivery. See the [static file guide](docs/static-io.md) for platform behavior and the [benchmark report](bench/sendfile.md) for measured results and host details.
-
-## Contributing
-
-The [feature guide](docs/features.md) connects operator-visible behavior to acceptance tests. [AGENTS.md](AGENTS.md) lists repository skills and development commands.
-
-## License
-
-Rill’s original code and documentation are available under the [MIT License](LICENSE). Rill includes the [MIT notice for Hyper](notices/HYPER-LICENSE). The [transport notes](docs/hyper.md) describe the HTTP/1 file path.
+[Routing examples](docs/routing.md) · [Feature guide](docs/features.md) · [Contributing](AGENTS.md) · [MIT license](LICENSE)
