@@ -56,6 +56,8 @@ def launch(command, env):
                 if proc.poll() is not None:
                     raise RuntimeError("server exited")
                 time.sleep(.02)
+        else:
+            raise RuntimeError(f"server did not listen on 127.0.0.1:{port}")
         yield port
     finally:
         proc.terminate()

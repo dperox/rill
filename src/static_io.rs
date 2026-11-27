@@ -42,6 +42,7 @@ pub fn stream_chunk_bytes() -> io::Result<usize> {
 }
 
 struct FileJob {
+    root: Arc<PathBuf>,
     path: PathBuf,
     head: bool,
     regions: bool,
@@ -49,7 +50,141 @@ struct FileJob {
     #[cfg(target_os = "linux")]
     cache: Option<Arc<AssetCache>>,
     conditions: StaticConditions,
-    reply: oneshot::Sender<io::Result<Response>>,
+    reply: oneshot::Sender<io::Result<OrdinaryOutcome>>,
+}
+
+pub(super) enum OrdinaryOutcome {
+    Response(Response),
+    Reject(axum::http::StatusCode),
+    Fallback,
+}
+
+pub(super) fn has_unsafe_windows_segment(segment: &str) -> bool {
+    if segment.contains(':') {
+        return true;
+    }
+    let stem = segment
+        .trim_end_matches([' ', '.'])
+        .split('.')
+        .next()
+        .unwrap_or("");
+    matches!(
+        stem.to_ascii_uppercase().as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "CONIN$"
+            | "CONOUT$"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    )
+}
+
+fn percent_decode_path(path: &str) -> Option<String> {
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len() {
+                return None;
+            }
+            let hi = (bytes[i + 1] as char).to_digit(16)?;
+            let lo = (bytes[i + 2] as char).to_digit(16)?;
+            let decoded = ((hi << 4) | lo) as u8;
+            if decoded == 0 {
+                return None;
+            }
+            out.push(decoded);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Validate a path before delegating to `ServeDir` so symlinks outside `root`,
+/// Windows ADS/device paths, and non-regular special files (e.g. FIFOs) never
+/// escape `DOCUMENT_ROOT` or block Tokio's blocking pool.
+pub(super) fn check_fallback_path(root: &Path, uri_path: &str) -> bool {
+    let Some(decoded) = percent_decode_path(uri_path) else {
+        return false;
+    };
+    if decoded.contains('\\') {
+        return false;
+    }
+    let Some(stripped) = decoded.strip_prefix('/') else {
+        return false;
+    };
+    let mut candidate = root.to_path_buf();
+    for segment in stripped.split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." {
+            if !candidate.pop() || !candidate.starts_with(root) {
+                return false;
+            }
+            continue;
+        }
+        if cfg!(windows) && has_unsafe_windows_segment(segment) {
+            return false;
+        }
+        candidate.push(segment);
+    }
+    let mut check_target = candidate;
+    if uri_path.ends_with('/') {
+        let index = check_target.join("index.html");
+        if index.symlink_metadata().is_ok() {
+            check_target = index;
+        }
+    }
+    match std::fs::canonicalize(&check_target) {
+        Ok(canonical) => {
+            if !canonical.starts_with(root) {
+                return false;
+            }
+            match std::fs::metadata(&canonical) {
+                Ok(meta) => {
+                    if meta.is_dir() {
+                        let index = canonical.join("index.html");
+                        if let Ok(index_canon) = std::fs::canonicalize(&index) {
+                            if !index_canon.starts_with(root) {
+                                return false;
+                            }
+                            return std::fs::metadata(&index_canon)
+                                .is_ok_and(|m| m.is_file() || m.is_dir());
+                        }
+                        true
+                    } else {
+                        meta.is_file()
+                    }
+                }
+                Err(_) => true,
+            }
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => true,
+        Err(_) => false,
+    }
 }
 
 type Batch = Mutex<Vec<FileJob>>;
@@ -64,7 +199,7 @@ fn ordinary_file(
     req: &Request,
     conditions: &StaticConditions,
     cache: Option<&Arc<AssetCache>>,
-) -> Option<oneshot::Receiver<io::Result<Response>>> {
+) -> Option<oneshot::Receiver<io::Result<OrdinaryOutcome>>> {
     let head = *req.method() == Method::HEAD;
     let uri_path = req.uri().path();
     if !(head || *req.method() == Method::GET)
@@ -76,7 +211,7 @@ fn ordinary_file(
     let relative = Path::new(uri_path.strip_prefix('/')?);
     if !relative
         .components()
-        .all(|c| matches!(c, Component::Normal(_)))
+        .all(|c| matches!(c, Component::Normal(s) if !cfg!(windows) || !s.to_str().is_none_or(has_unsafe_windows_segment)))
     {
         return None;
     }
@@ -94,7 +229,9 @@ fn ordinary_file(
     let cache = if let Some(cache) = cache.filter(|_| regions) {
         if AssetCache::eligible(uri_path) {
             if let Some(asset) = cache.get(path.as_os_str()) {
-                let _ = reply.send(Ok(asset.response(head, conditions)));
+                let _ = reply.send(Ok(OrdinaryOutcome::Response(
+                    asset.response(head, conditions),
+                )));
                 return Some(receive);
             }
             (!head).then(|| cache.clone())
@@ -107,6 +244,7 @@ fn ordinary_file(
     #[cfg(not(target_os = "linux"))]
     let _ = cache;
     let job = FileJob {
+        root,
         path,
         head,
         regions,
@@ -149,6 +287,8 @@ fn ordinary_file(
 enum FileResponse {
     Inline(Response<Bytes>),
     Separate(Response),
+    Reject(axum::http::StatusCode),
+    Fallback,
 }
 
 fn serve_batch(jobs: Vec<FileJob>) {
@@ -171,12 +311,16 @@ fn serve_batch(jobs: Vec<FileJob>) {
                         && next.conditions == job.conditions
                 }) {
                     if !next.reply.is_closed() {
-                        let _ = next.reply.send(Ok(response.clone().map(Body::from)));
+                        let _ = next.reply.send(Ok(OrdinaryOutcome::Response(
+                            response.clone().map(Body::from),
+                        )));
                     }
                 }
-                Ok(response.map(Body::from))
+                Ok(OrdinaryOutcome::Response(response.map(Body::from)))
             }
-            Ok(FileResponse::Separate(response)) => Ok(response),
+            Ok(FileResponse::Separate(response)) => Ok(OrdinaryOutcome::Response(response)),
+            Ok(FileResponse::Reject(status)) => Ok(OrdinaryOutcome::Reject(status)),
+            Ok(FileResponse::Fallback) => Ok(OrdinaryOutcome::Fallback),
             Err(error) => Err(error),
         };
         let _ = job.reply.send(result);
@@ -193,6 +337,16 @@ fn read_file(job: &FileJob) -> io::Result<FileResponse> {
             asset.response(false, &job.conditions),
         ));
     }
+    let canonical = match std::fs::canonicalize(&job.path) {
+        Ok(canonical) => canonical,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            return Ok(FileResponse::Reject(axum::http::StatusCode::NOT_FOUND));
+        }
+        Err(err) => return Err(err),
+    };
+    if !canonical.starts_with(&*job.root) {
+        return Ok(FileResponse::Reject(axum::http::StatusCode::NOT_FOUND));
+    }
     let mut opts = File::options();
     opts.read(true);
     #[cfg(unix)]
@@ -200,10 +354,15 @@ fn read_file(job: &FileJob) -> io::Result<FileResponse> {
         use std::os::unix::fs::OpenOptionsExt;
         opts.custom_flags(libc::O_NONBLOCK);
     }
-    let mut file = opts.open(&job.path)?;
+    let mut file = opts.open(&canonical)?;
     let meta = file.metadata()?;
+    if meta.is_dir() {
+        return Ok(FileResponse::Fallback);
+    }
     if !meta.is_file() {
-        return Err(io::Error::other("requires standard static handler"));
+        // Never delegate FIFOs, sockets, or device nodes to ServeDir, which
+        // opens files without O_NONBLOCK and can deadlock Tokio's blocking pool.
+        return Ok(FileResponse::Reject(axum::http::StatusCode::NOT_FOUND));
     }
 
     let len = meta.len();
@@ -282,4 +441,55 @@ fn read_inline(file: &mut File, len: u64) -> io::Result<Bytes> {
     let mut data = vec![0; len as usize];
     file.read_exact(&mut data)?;
     Ok(Bytes::from(data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_ads_and_dos_device_segments_rejected() {
+        for bad in [
+            "index.html::$DATA",
+            "file:Zone.Identifier",
+            "CON",
+            "nul.txt",
+            "COM1.log",
+            "lpt9 ",
+        ] {
+            assert!(has_unsafe_windows_segment(bad), "{bad}");
+        }
+        for good in ["index.html", "console.js", "null.txt", "com10.bin"] {
+            assert!(!has_unsafe_windows_segment(good), "{good}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fallback_path_blocks_symlink_escape_and_fifo() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!("rill-static-sec-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("root");
+        let outside = base.join("secret.txt");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&outside, b"secret").unwrap();
+        std::fs::write(root.join("ok.txt"), b"ok").unwrap();
+        symlink(&outside, root.join("escape.txt")).unwrap();
+        symlink(root.join("ok.txt"), root.join("inside.txt")).unwrap();
+
+        let canon_root = root.canonicalize().unwrap();
+        assert!(check_fallback_path(&canon_root, "/ok.txt"));
+        assert!(check_fallback_path(&canon_root, "/inside.txt"));
+        assert!(!check_fallback_path(&canon_root, "/escape.txt"));
+        assert!(!check_fallback_path(&canon_root, "/%65scape.txt"));
+        assert!(!check_fallback_path(&canon_root, "/../secret.txt"));
+
+        let fifo = root.join("pipe");
+        let c_fifo = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c_fifo.as_ptr(), 0o600) }, 0);
+        assert!(!check_fallback_path(&canon_root, "/pipe"));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

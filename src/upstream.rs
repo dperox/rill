@@ -48,12 +48,11 @@ pub enum Transport {
     Secure(Client<HttpsConnector<HttpConnector>, Body>),
 }
 
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_IDLE_PER_HOST: usize = 64;
+
 impl Transport {
-    pub fn new(https: bool) -> io::Result<Self> {
-        let builder = Client::builder(TokioExecutor::new());
-        if !https {
-            return Ok(Self::Plain(builder.build_http()));
-        }
+    fn build_tls_config() -> io::Result<rustls::ClientConfig> {
         let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
@@ -61,10 +60,17 @@ impl Transport {
         .map_err(io::Error::other)?;
         let tls = if let Some(ca) = env::var_os("RILL_UPSTREAM_CA") {
             let mut roots = RootCertStore::empty();
-            for cert in CertificateDer::pem_file_iter(ca).map_err(io::Error::other)? {
+            for cert in CertificateDer::pem_file_iter(&ca).map_err(|e| {
+                io::Error::other(format!("RILL_UPSTREAM_CA ({}): {e}", ca.to_string_lossy()))
+            })? {
                 roots
-                    .add(cert.map_err(io::Error::other)?)
-                    .map_err(io::Error::other)?;
+                    .add(cert.map_err(|e| {
+                        io::Error::other(format!(
+                            "RILL_UPSTREAM_CA ({}): {e}",
+                            ca.to_string_lossy()
+                        ))
+                    })?)
+                    .map_err(|e| io::Error::other(format!("RILL_UPSTREAM_CA: {e}")))?;
             }
             if roots.is_empty() {
                 return Err(io::Error::other(
@@ -81,13 +87,28 @@ impl Transport {
         ) {
             (Some(cert), Some(key)) => tls
                 .with_client_auth_cert(
-                    CertificateDer::pem_file_iter(cert)
-                        .map_err(io::Error::other)?
+                    CertificateDer::pem_file_iter(&cert)
+                        .map_err(|e| {
+                            io::Error::other(format!(
+                                "RILL_UPSTREAM_CERT ({}): {e}",
+                                cert.to_string_lossy()
+                            ))
+                        })?
                         .collect::<Result<Vec<_>, _>>()
-                        .map_err(io::Error::other)?,
-                    PrivateKeyDer::from_pem_file(key).map_err(io::Error::other)?,
+                        .map_err(|e| {
+                            io::Error::other(format!(
+                                "RILL_UPSTREAM_CERT ({}): {e}",
+                                cert.to_string_lossy()
+                            ))
+                        })?,
+                    PrivateKeyDer::from_pem_file(&key).map_err(|e| {
+                        io::Error::other(format!(
+                            "RILL_UPSTREAM_KEY ({}): {e}",
+                            key.to_string_lossy()
+                        ))
+                    })?,
                 )
-                .map_err(io::Error::other)?,
+                .map_err(|e| io::Error::other(format!("RILL_UPSTREAM_CERT/KEY: {e}")))?,
             (None, None) => tls.with_no_client_auth(),
             _ => {
                 return Err(io::Error::other(
@@ -95,11 +116,35 @@ impl Transport {
                 ));
             }
         };
+        Ok(tls)
+    }
+
+    pub fn validate_env() -> io::Result<()> {
+        if env::var_os("RILL_UPSTREAM_CA").is_some()
+            || env::var_os("RILL_UPSTREAM_CERT").is_some()
+            || env::var_os("RILL_UPSTREAM_KEY").is_some()
+        {
+            let _ = Self::build_tls_config()?;
+        }
+        Ok(())
+    }
+
+    pub fn new(https: bool) -> io::Result<Self> {
+        let mut builder = Client::builder(TokioExecutor::new());
+        builder.pool_max_idle_per_host(MAX_IDLE_PER_HOST);
+        let mut http = HttpConnector::new();
+        http.set_connect_timeout(Some(CONNECT_TIMEOUT));
+        http.set_nodelay(true);
+        if !https {
+            return Ok(Self::Plain(builder.build(http)));
+        }
+        http.enforce_http(false);
+        let tls = Self::build_tls_config()?;
         let connector = HttpsConnectorBuilder::new()
             .with_tls_config(tls)
             .https_or_http()
             .enable_http1()
-            .build();
+            .wrap_connector(http);
         Ok(Self::Secure(builder.build(connector)))
     }
 
@@ -121,19 +166,26 @@ pub struct Health {
 
 impl Health {
     pub fn from_env() -> io::Result<Option<Self>> {
-        let seconds: u32 = env::var("RILL_HEALTH_INTERVAL_SECS")
-            .unwrap_or_else(|_| "0".into())
-            .parse()
-            .map_err(io::Error::other)?;
-        let path = env::var("RILL_HEALTH_PATH")
-            .ok()
-            .map(|s| {
+        let seconds: u32 = match env::var("RILL_HEALTH_INTERVAL_SECS") {
+            Ok(value) => value.parse().map_err(|_| {
+                io::Error::other("RILL_HEALTH_INTERVAL_SECS must be an unsigned integer")
+            })?,
+            Err(env::VarError::NotPresent) => 0,
+            Err(e) => return Err(io::Error::other(format!("RILL_HEALTH_INTERVAL_SECS: {e}"))),
+        };
+        let path = match env::var("RILL_HEALTH_PATH") {
+            Ok(s) => {
                 if !s.starts_with('/') {
                     return Err(io::Error::other("RILL_HEALTH_PATH must start with /"));
                 }
-                s.parse().map_err(io::Error::other)
-            })
-            .transpose()?;
+                Some(
+                    s.parse()
+                        .map_err(|e| io::Error::other(format!("RILL_HEALTH_PATH: {e}")))?,
+                )
+            }
+            Err(env::VarError::NotPresent) => None,
+            Err(e) => return Err(io::Error::other(format!("RILL_HEALTH_PATH: {e}"))),
+        };
         if path.is_some() && seconds == 0 {
             return Err(io::Error::other(
                 "RILL_HEALTH_PATH requires a positive probe interval",
@@ -212,7 +264,7 @@ impl Pool {
                     .is_none_or(|v: &AtomicBool| v.load(Ordering::Relaxed))
         });
         if let Some(active) = &self.active {
-            let mut counts = active.lock().unwrap();
+            let mut counts = active.lock().unwrap_or_else(|e| e.into_inner());
             let i = eligible.min_by_key(|&i| counts[i])?;
             counts[i] += 1;
             Some((i, Some(Lease(self.clone(), i))))

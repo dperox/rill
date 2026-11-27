@@ -1,3 +1,7 @@
-.git
-/target
-**/__pycache__
+*
+!Cargo.toml
+!Cargo.lock
+!LICENSE
+!notices/
+!public/
+!src/

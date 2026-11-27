@@ -9,7 +9,22 @@ use std::{
     path::Path,
 };
 
-#[derive(Serialize)]
+const MAX_EXPAND_DEPTH: usize = 64;
+const MAX_DIAGNOSTICS: usize = 10_000;
+const MAX_LABEL_BYTES: usize = 256;
+
+fn bound_label(value: &str) -> String {
+    if value.len() <= MAX_LABEL_BYTES {
+        return value.to_owned();
+    }
+    let mut end = MAX_LABEL_BYTES;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &value[..end])
+}
+
+#[derive(Debug, Serialize)]
 pub struct Problem {
     code: &'static str,
     message: String,
@@ -98,6 +113,7 @@ pub fn run(path: &str) -> io::Result<()> {
         &mut vec![dump.root.clone()],
         &mut seen,
         &mut budget,
+        0,
         &mut report,
     ) {
         return finish("migrate nginx", "error", 1, json!({"diagnostics":[e]}));
@@ -141,8 +157,13 @@ fn expand(
     stack: &mut Vec<String>,
     seen: &mut BTreeSet<String>,
     budget: &mut usize,
+    depth: usize,
     report: &mut Report,
 ) -> Result<(), Problem> {
+    if depth > MAX_EXPAND_DEPTH {
+        let (file, line) = nodes.first().map_or(("", 1), |n| (n.file.as_str(), n.line));
+        return Err(Problem::syntax(file, line));
+    }
     let src = std::mem::take(nodes);
     for mut n in src {
         if *budget == 0 || stack.len() > 40 {
@@ -163,12 +184,20 @@ fn expand(
                 seen.insert(file.clone());
                 stack.push(file.clone());
                 let mut child = dump.files[file].clone();
-                expand(&mut child, dump, stack, seen, budget, report)?;
+                expand(&mut child, dump, stack, seen, budget, depth, report)?;
                 nodes.extend(child);
                 stack.pop();
             }
         } else {
-            expand(&mut n.children, dump, stack, seen, budget, report)?;
+            expand(
+                &mut n.children,
+                dump,
+                stack,
+                seen,
+                budget,
+                depth + 1,
+                report,
+            )?;
             nodes.push(n);
         }
     }
@@ -212,16 +241,42 @@ fn endpoint(s: &str) -> bool {
 #[derive(Default)]
 struct Report {
     review: bool,
+    truncated: bool,
     diagnostics: Vec<Value>,
     env: BTreeMap<String, String>,
     sites: Vec<Value>,
     routes: Vec<Value>,
+    seen_sites: BTreeSet<String>,
+    seen_routes: BTreeSet<(String, String)>,
     groups: BTreeMap<String, Vec<String>>,
 }
 impl Report {
     fn note(&mut self, n: &Directive, ctx: &str, status: &str, code: &str, msg: &str) {
         self.review |= status != "translated";
-        self.diagnostics.push(json!({"file":n.file,"line":n.line,"context":ctx,"directive":n.words[0],"status":status,"code":code,"message":msg}));
+        if self.diagnostics.len() >= MAX_DIAGNOSTICS {
+            if !self.truncated {
+                self.truncated = true;
+                self.review = true;
+                self.diagnostics.push(json!({
+                    "file": n.file,
+                    "line": n.line,
+                    "context": bound_label(ctx),
+                    "status": "unsupported",
+                    "code": "diagnostics_truncated",
+                    "message": "Diagnostic output limit reached; additional directives omitted"
+                }));
+            }
+            return;
+        }
+        self.diagnostics.push(json!({
+            "file": n.file,
+            "line": n.line,
+            "context": bound_label(ctx),
+            "directive": bound_label(&n.words[0]),
+            "status": status,
+            "code": code,
+            "message": msg
+        }));
     }
     fn ok(&mut self, n: &Directive, ctx: &str) {
         self.note(
@@ -268,8 +323,11 @@ impl Report {
             ),
         };
         self.note(n, ctx, "unsupported", code, msg);
-        for child in &n.children {
-            self.unsupported(child, &format!("{ctx}/{}", n.words[0]));
+        if !n.children.is_empty() {
+            let child_ctx = bound_label(&format!("{ctx}/{}", bound_label(&n.words[0])));
+            for child in &n.children {
+                self.unsupported(child, &child_ctx);
+            }
         }
     }
     fn http(&mut self, nodes: &[Directive]) {
@@ -307,6 +365,7 @@ impl Report {
         }
     }
     fn server(&mut self, n: &Directive) {
+        let mut seen_hosts = BTreeSet::new();
         let hosts: Vec<_> = n
             .children
             .iter()
@@ -314,8 +373,9 @@ impl Report {
             .flat_map(|d| d.words[1..].iter())
             .filter(|h| dns(h))
             .map(|h| h.to_ascii_lowercase())
+            .filter(|h| seen_hosts.insert(h.clone()))
             .collect();
-        let ctx = format!("http/server[{}]", hosts.join(","));
+        let ctx = bound_label(&format!("http/server[{}]", hosts.join(",")));
         self.note(n,&ctx,"behavior_differs","default_server","Review listener defaults, unmatched hosts, inherited policies and NGINX implicit defaults before deployment");
         for d in &n.children {
             match d.words[0].as_str() {
@@ -342,10 +402,25 @@ impl Report {
                     if !hosts.is_empty()
                         && literal(d).is_some_and(|v| Path::new(v).is_absolute()) =>
                 {
+                    let mut duplicate = false;
                     for h in &hosts {
-                        self.sites.push(json!({"host":h,"root":d.words[1]}));
+                        if self.seen_sites.insert(h.clone()) {
+                            self.sites.push(json!({"host":h,"root":d.words[1]}));
+                        } else {
+                            duplicate = true;
+                        }
                     }
-                    self.ok(d, &ctx);
+                    if duplicate {
+                        self.note(
+                            d,
+                            &ctx,
+                            "unsupported",
+                            "duplicate_definition",
+                            "Duplicate site host omitted from candidate; reconcile conflicting server blocks",
+                        );
+                    } else {
+                        self.ok(d, &ctx);
+                    }
                 }
                 "location"
                     if block(d, "location", 1)
@@ -354,7 +429,7 @@ impl Report {
                         && d.words[1].ends_with('/')
                         && !d.words[1].contains(['$', '\\', '?', '#']) =>
                 {
-                    let loc = format!("{ctx}/location[{}]", d.words[1]);
+                    let loc = bound_label(&format!("{ctx}/location[{}]", d.words[1]));
                     self.note(
                         d,
                         &loc,
@@ -367,7 +442,7 @@ impl Report {
                             && let Some(url) = literal(action)
                             && let Some((scheme, authority)) = url.split_once("://")
                             && matches!(scheme, "http" | "https")
-                            && endpoint(authority)
+                            && !authority.contains(['@', '/', '$', '\\', '%'])
                         {
                             let peers = match self.groups.get(authority) {
                                 Some(peers) if peers.is_empty() => {
@@ -375,16 +450,35 @@ impl Report {
                                     continue;
                                 }
                                 Some(peers) => peers.clone(),
-                                None => vec![authority.to_owned()],
+                                None if endpoint(authority) => vec![authority.to_owned()],
+                                None => {
+                                    self.unsupported(action, &loc);
+                                    continue;
+                                }
                             };
                             let upstreams: Vec<_> =
                                 peers.iter().map(|v| format!("{scheme}://{v}")).collect();
+                            let mut duplicate = false;
                             for h in &hosts {
-                                self.routes.push(
-                                    json!({"host":h,"prefix":d.words[1],"upstreams":upstreams}),
-                                );
+                                if self.seen_routes.insert((h.clone(), d.words[1].clone())) {
+                                    self.routes.push(
+                                        json!({"host":h,"prefix":d.words[1],"upstreams":upstreams}),
+                                    );
+                                } else {
+                                    duplicate = true;
+                                }
                             }
-                            self.note(action,&loc,"behavior_differs","proxy_defaults","Path preserved; compare upstream Host, TLS verification, retry, buffering and timeout behavior");
+                            if duplicate {
+                                self.note(
+                                    action,
+                                    &loc,
+                                    "unsupported",
+                                    "duplicate_definition",
+                                    "Duplicate virtual host and prefix omitted from candidate; reconcile conflicting locations",
+                                );
+                            } else {
+                                self.note(action,&loc,"behavior_differs","proxy_defaults","Path preserved; compare upstream Host, TLS verification, retry, buffering and timeout behavior");
+                            }
                         } else {
                             self.unsupported(action, &loc);
                         }
@@ -393,5 +487,94 @@ impl Report {
                 _ => self.unsupported(d, &ctx),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn included_normalizes_parent_dir_components() {
+        let text = "\
+# configuration file /etc/nginx/conf.d/main.conf:
+http { include ../sites-enabled/*.conf; }
+# configuration file /etc/nginx/sites-enabled/app.conf:
+server { server_name app.example; }
+";
+        let dump = Dump::read(text, "nginx.conf").unwrap();
+        let included = dump.included("../sites-enabled/*.conf");
+        assert_eq!(included, vec!["/etc/nginx/sites-enabled/app.conf"]);
+    }
+
+    #[test]
+    fn underscore_upstream_and_duplicate_site_route_handling() {
+        let text = "\
+http {
+  upstream api_v1 { server 127.0.0.1:9001; }
+  server {
+    server_name app.example APP.EXAMPLE;
+    root /var/www/one;
+    location /api/ { proxy_pass http://api_v1; }
+  }
+  server {
+    server_name app.example;
+    root /var/www/two;
+    location /api/ { proxy_pass http://api_v1; }
+  }
+}
+";
+        let dump = Dump::read(text, "nginx.conf").unwrap();
+        let mut report = Report::default();
+        let nodes = &dump.files[&dump.root];
+        report.http(&nodes[0].children);
+        assert_eq!(report.sites.len(), 1);
+        assert_eq!(report.routes.len(), 1);
+        assert_eq!(
+            report.routes[0]["upstreams"],
+            json!(["http://127.0.0.1:9001"])
+        );
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|d| d["code"] == "duplicate_definition")
+        );
+    }
+
+    #[test]
+    fn deeply_nested_includes_hit_global_depth_limit() {
+        let mut text = String::new();
+        text.push_str("# configuration file /etc/nginx/a.conf:\n");
+        for _ in 0..40 {
+            text.push_str("a { ");
+        }
+        text.push_str("include b.conf;");
+        for _ in 0..40 {
+            text.push_str(" }");
+        }
+        text.push_str("\n# configuration file /etc/nginx/b.conf:\n");
+        for _ in 0..40 {
+            text.push_str("b { ");
+        }
+        text.push_str("x 1;");
+        for _ in 0..40 {
+            text.push_str(" }");
+        }
+        let dump = Dump::read(&text, "a.conf").unwrap();
+        let mut report = Report::default();
+        let mut seen = BTreeSet::from([dump.root.clone()]);
+        let mut budget = 100_000usize;
+        let mut nodes = dump.files[&dump.root].clone();
+        let err = expand(
+            &mut nodes,
+            &dump,
+            &mut vec![dump.root.clone()],
+            &mut seen,
+            &mut budget,
+            0,
+            &mut report,
+        );
+        assert!(err.is_err());
     }
 }

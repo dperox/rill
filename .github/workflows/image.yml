@@ -6,7 +6,10 @@ on:
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: rill-release-image-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   IMAGE: ghcr.io/dperox/rill
@@ -14,6 +17,10 @@ env:
 jobs:
   build:
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      packages: write
+    timeout-minutes: 30
     strategy:
       matrix:
         include:
@@ -23,9 +30,18 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Validate release tag matches Cargo.toml
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "Release tag $GITHUB_REF_NAME does not match Cargo.toml version $version" >&2
+            exit 1
+          fi
       - name: Build and push native image
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -37,17 +53,38 @@ jobs:
           docker run --rm "$tag" config test
           printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker push "$tag"
+          mkdir -p "$RUNNER_TEMP/digests"
+          docker inspect --format='{{index .RepoDigests 0}}' "$tag" > "$RUNNER_TEMP/digests/$ARCH.txt"
+      - name: Upload image digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: rill-image-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/${{ matrix.arch }}.txt
+          if-no-files-found: error
 
   manifest:
     needs: build
+    permissions:
+      packages: write
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
+      - name: Download image digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rill-image-digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
       - name: Publish multi-platform tag
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          digest_amd64=$(<"$RUNNER_TEMP/digests/amd64.txt")
+          digest_arm64=$(<"$RUNNER_TEMP/digests/arm64.txt")
+          [[ -n "$digest_amd64" && -n "$digest_arm64" ]]
           tag="$IMAGE:${GITHUB_REF_NAME#v}"
           printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker buildx imagetools create -t "$tag" "$tag-amd64" "$tag-arm64"
+          docker buildx imagetools create -t "$tag" "$digest_amd64" "$digest_arm64"
           docker buildx imagetools inspect "$tag"

@@ -71,12 +71,13 @@ def running(root, backend, **settings):
     env = {key: value for key, value in os.environ.items() if key not in POLICY}
     env.update(LISTEN=f"127.0.0.1:{port}", DOCUMENT_ROOT=str(root),
                UPSTREAMS=f"127.0.0.1:{backend.server_port}", **settings)
-    with subprocess.Popen([BINARY], cwd=REPO, env=env, stderr=subprocess.PIPE) as process:
+    log_path = Path(root) / ".rill-policy-stderr.log"
+    with log_path.open("wb") as err_file, subprocess.Popen([BINARY], cwd=REPO, env=env, stderr=err_file) as process:
         try:
             deadline = time.monotonic() + 5
             while True:
                 if process.poll() is not None:
-                    raise RuntimeError(process.stderr.read().decode())
+                    raise RuntimeError(log_path.read_text(errors="replace"))
                 try:
                     with socket.create_connection(("127.0.0.1", port), timeout=0.1):
                         break
@@ -88,6 +89,7 @@ def running(root, backend, **settings):
         finally:
             if process.poll() is None:
                 process.terminate()
+                process.wait(timeout=5)
 
 
 def cache_checks(root, backend):

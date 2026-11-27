@@ -102,23 +102,24 @@ pub(super) fn static_precondition(
 ) -> Option<StatusCode> {
     let parse_date =
         |value: &header::HeaderValue| httpdate::parse_http_date(value.to_str().ok()?).ok();
-    if conditions.unmodified_since.as_ref().is_some_and(|value| {
-        modified
-            .zip(parse_date(value))
-            .is_none_or(|(modified, date)| date < modified)
-    }) || conditions
+    if conditions
         .if_match
         .as_ref()
         .is_some_and(|value| !etag_matches(value, etag, false))
+        || (conditions.if_match.is_none()
+            && conditions.unmodified_since.as_ref().is_some_and(|value| {
+                matches!((modified, parse_date(value)), (Some(modified), Some(date)) if date < modified)
+            }))
     {
         return Some(StatusCode::PRECONDITION_FAILED);
     }
 
-    let since = conditions.modified_since.as_ref();
-    let none_match = conditions.none_match.as_ref();
-    if (since.is_some() || none_match.is_some())
-        && since.is_none_or(|value| modified.is_some_and(|date| Some(date) == parse_date(value)))
-        && none_match.is_none_or(|value| etag_matches(value, etag, true))
+    if let Some(none_match) = conditions.none_match.as_ref() {
+        if etag_matches(none_match, etag, true) {
+            return Some(StatusCode::NOT_MODIFIED);
+        }
+    } else if let Some(since) = conditions.modified_since.as_ref()
+        && modified.is_some_and(|date| Some(date) == parse_date(since))
     {
         return Some(StatusCode::NOT_MODIFIED);
     }
@@ -179,10 +180,29 @@ pub(crate) async fn serve_static(
 ) -> Response {
     let conditions = StaticConditions::remove_from(req.headers_mut());
 
-    if let Some(task) = super::ordinary_file(root, stream_chunk, &req, &conditions, cache.as_ref())
-        && let Ok(Ok(response)) = task.await
+    if let Some(task) = super::ordinary_file(
+        root.clone(),
+        stream_chunk,
+        &req,
+        &conditions,
+        cache.as_ref(),
+    ) && let Ok(Ok(outcome)) = task.await
     {
-        return response;
+        match outcome {
+            super::OrdinaryOutcome::Response(response) => return response,
+            super::OrdinaryOutcome::Reject(status) => return error_page(status),
+            super::OrdinaryOutcome::Fallback => {}
+        }
+    }
+
+    let check_root = root;
+    let check_path = req.uri().path().to_owned();
+    let safe =
+        tokio::task::spawn_blocking(move || super::check_fallback_path(&check_root, &check_path))
+            .await
+            .unwrap_or(false);
+    if !safe {
+        return error_page(StatusCode::NOT_FOUND);
     }
 
     // ServeDir retains file metadata on 206 and 416, so preconditions can
@@ -218,4 +238,48 @@ pub(crate) async fn serve_static(
         res.headers_mut().insert(header::ETAG, value);
     }
     res
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn precondition_follows_rfc9110_precedence_and_ignores_invalid_unmodified_since() {
+        let modified = Some(UNIX_EPOCH + Duration::from_secs(1_700_000_000));
+        let etag = static_etag(1_700_000_000, 20);
+
+        // Invalid If-Unmodified-Since must be ignored, not 412.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_UNMODIFIED_SINCE,
+            header::HeaderValue::from_static("not-a-date"),
+        );
+        let cond = StaticConditions::remove_from(&mut headers);
+        assert_eq!(static_precondition(&cond, modified, Some(&etag)), None);
+
+        // Matching If-Match overrides older If-Unmodified-Since.
+        let mut headers = HeaderMap::new();
+        headers.insert(header::IF_MATCH, etag.clone());
+        headers.insert(
+            header::IF_UNMODIFIED_SINCE,
+            header::HeaderValue::from_static("Tue, 14 Nov 2023 22:13:19 GMT"),
+        );
+        let cond = StaticConditions::remove_from(&mut headers);
+        assert_eq!(static_precondition(&cond, modified, Some(&etag)), None);
+
+        // Matching If-None-Match overrides older/invalid If-Modified-Since.
+        let mut headers = HeaderMap::new();
+        headers.insert(header::IF_NONE_MATCH, etag.clone());
+        headers.insert(
+            header::IF_MODIFIED_SINCE,
+            header::HeaderValue::from_static("not-a-date"),
+        );
+        let cond = StaticConditions::remove_from(&mut headers);
+        assert_eq!(
+            static_precondition(&cond, modified, Some(&etag)),
+            Some(StatusCode::NOT_MODIFIED)
+        );
+    }
 }

@@ -44,10 +44,20 @@ with TemporaryDirectory() as directory:
     for entry in root.rglob("*"):
         os.utime(entry, (1700000000, 1700000000))
     servers = [ThreadingHTTPServer(("127.0.0.1", 0), Backend) for _ in range(2)]
+    threads = []
     for server, label in zip(servers, ("A", "B")):
         server.label = label
-        Thread(target=server.serve_forever, daemon=True).start()
-    env = dict(os.environ, TEST_STATE=directory, DOCUMENT_ROOT=str(root),
-               UPSTREAMS=",".join(f"127.0.0.1:{s.server_port}" for s in servers))
-    subprocess.run([tool, "app", "replay", ".", "--build", os.getenv("RILL", "target/debug/rill")],
-                   env=env, check=True)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        threads.append(thread)
+    try:
+        env = dict(os.environ, TEST_STATE=directory, DOCUMENT_ROOT=str(root),
+                   UPSTREAMS=",".join(f"127.0.0.1:{s.server_port}" for s in servers))
+        subprocess.run([tool, "app", "replay", ".", "--build", os.getenv("RILL", "target/debug/rill")],
+                       env=env, check=True)
+    finally:
+        for server in servers:
+            server.shutdown()
+            server.server_close()
+        for thread in threads:
+            thread.join()

@@ -13,12 +13,13 @@ Rill also accepts the dump on stdin. It reads included content from the dump its
 
 | Exit | Command and status | Action |
 | --- | --- | --- |
-| 0 | `migrate nginx` reports `translated` | Inspect the candidate and run preflight. |
-| 2 | `migrate nginx` reports `review_required` | Retain the report. Resolve every behavioral difference and unsupported directive before cutover. |
+| 0 | `migrate nginx` reports `translated` | Inspect the candidate and run preflight (only emitted when no `server` blocks require review). |
+| 2 | `migrate nginx` reports `review_required` | Retain the report. Resolve every behavioral difference and unsupported directive before cutover (expected for any dump containing `server` blocks). |
 | 1 | `migrate nginx` reports `error` | Correct the input. No candidate was produced. |
 | 0 / 1 | `config test` reports `valid` / `invalid` | Read diagnostics on failure. |
+| 1 | `cli` reports `error` (`invalid_arguments`) | Check CLI syntax with `rill --help` or version with `rill --version`. |
 
-The [version 1 JSON Schema](cli-report-v1.schema.json) describes the report for machine validation. Both commands emit `schema_version: 1`, `command`, `status`, and a `diagnostics` array. Branch on the exit code, then check the schema version and diagnostic `code`. Messages are for people. Migration records for directives include the source `file`, one-based `line`, enclosing `context`, directive name and classification. For example, an auth subrequest produces `authentication_required`; a URI on `proxy_pass` produces `proxy_uri_replacement`. Every translated virtual server also has a review record for NGINX defaults and listener scope.
+The [version 1 JSON Schema](cli-report-v1.schema.json) describes the report for machine validation. All JSON-emitting CLI commands (`migrate nginx`, `config test`, and invalid CLI invocations reporting `command: "cli"`) emit `schema_version: 1`, `command`, `status`, and a `diagnostics` array. Branch on the exit code, then check the schema version and diagnostic `code`. Messages are for people. Migration records for directives include the source `file`, one-based `line`, enclosing `context`, directive name and classification. For example, an auth subrequest produces `authentication_required`; a URI on `proxy_pass` produces `proxy_uri_replacement`. Every translated virtual server also has a review record for NGINX defaults and listener scope, so real server migrations exit 2 (`review_required`). Use `rill --help` (`-h`) for usage and `rill --version` (`-V`) for the binary version.
 
 `candidate.config` is the Rill JSON object. `candidate.environment` contains literal string settings to pass through the process environment. For example, after review:
 

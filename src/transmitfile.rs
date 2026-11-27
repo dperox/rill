@@ -9,11 +9,11 @@ use std::{
 };
 use tokio::sync::{Semaphore, SemaphorePermit, oneshot};
 use windows_sys::Win32::{
-    Foundation::{ERROR_IO_PENDING, WAIT_TIMEOUT},
+    Foundation::{ERROR_IO_PENDING, WAIT_OBJECT_0, WAIT_TIMEOUT},
     Networking::WinSock::{TransmitFile, WSAGetLastError, WSAGetOverlappedResult},
     System::{
         IO::{CancelIoEx, OVERLAPPED},
-        Threading::{CreateEventW, WaitForSingleObject},
+        Threading::{CreateEventW, INFINITE, WaitForSingleObject},
     },
 };
 
@@ -136,16 +136,38 @@ fn transfer(job: &Job) -> io::Result<u64> {
                 if error != ERROR_IO_PENDING as i32 {
                     return Err(io::Error::from_raw_os_error(error));
                 }
-                while WaitForSingleObject(event.as_raw_handle(), 100) == WAIT_TIMEOUT {
-                    if job.done.is_closed() {
-                        CancelIoEx(socket as _, &op);
+                let mut cancelled = false;
+                loop {
+                    let wait = WaitForSingleObject(
+                        event.as_raw_handle(),
+                        if cancelled { INFINITE } else { 100 },
+                    );
+                    if wait == WAIT_OBJECT_0 {
                         break;
+                    }
+                    if wait == WAIT_TIMEOUT && !cancelled && job.done.is_closed() {
+                        CancelIoEx(socket as _, &op);
+                        cancelled = true;
+                        continue;
+                    }
+                    if wait != WAIT_TIMEOUT {
+                        // A failed wait cannot safely leave this frame while the kernel
+                        // may still reference `op` and `event`. Request cancellation and
+                        // wait for the overlapped completion before unwinding.
+                        if !cancelled {
+                            CancelIoEx(socket as _, &op);
+                            cancelled = true;
+                            continue;
+                        }
+                        std::process::abort();
                     }
                 }
             }
             let mut sent = 0;
             let mut flags = 0;
-            if WSAGetOverlappedResult(socket, &op, &mut sent, 1, &mut flags) == 0 {
+            // The event is already signaled (or TransmitFile completed synchronously),
+            // so pass fWait = 0 to avoid Winsock waiting on the low-bit-tagged hEvent.
+            if WSAGetOverlappedResult(socket, &op, &mut sent, 0, &mut flags) == 0 {
                 return Err(io::Error::from_raw_os_error(WSAGetLastError()));
             }
             if sent != chunk {

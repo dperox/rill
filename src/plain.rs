@@ -7,15 +7,70 @@ use hyper_util::{
     rt::{TokioExecutor, TokioIo},
     service::TowerToHyperService,
 };
-use std::{io, net::SocketAddr, time::Duration};
+use std::{
+    io,
+    net::SocketAddr,
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
 #[cfg(any(windows, target_os = "linux"))]
 mod file_writer;
 mod prefetched;
 mod short;
 mod workers;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tower::ServiceExt;
 pub use workers::WorkerReactors;
+
+pub(crate) fn is_transient_accept_error(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::Interrupted
+            | io::ErrorKind::WouldBlock
+    )
+}
+
+struct PrefetchedTcp {
+    pending: bytes::Bytes,
+    inner: tokio::net::TcpStream,
+}
+
+impl AsyncRead for PrefetchedTcp {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        if !self.pending.is_empty() {
+            let n = self.pending.len().min(buf.remaining());
+            buf.put_slice(&self.pending.split_to(n));
+            return Poll::Ready(Ok(()));
+        }
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for PrefetchedTcp {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct Transport {
@@ -52,16 +107,40 @@ pub async fn serve(
     }
     let mut next = 0;
     loop {
-        let (stream, peer) = listener.accept().await?;
-        if next == senders.len() {
+        let (stream, peer) = match listener.accept().await {
+            Ok(accepted) => accepted,
+            Err(error) if is_transient_accept_error(&error) => continue,
+            Err(error) => {
+                eprintln!("Plaintext accept error: {error}");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+        };
+        if senders.is_empty() || next == senders.len() {
             spawn_socket(stream, peer, app.clone(), transport);
             next = 0;
         } else {
-            senders[next]
-                .send((stream, peer))
-                .await
-                .map_err(|_| io::Error::other("HTTP/1 worker stopped"))?;
-            next += 1;
+            let mut pair = Some((stream, peer));
+            for offset in 0..senders.len() {
+                let target = (next + offset) % senders.len();
+                let item = pair.take().unwrap();
+                match senders[target].try_send(item) {
+                    Ok(()) => {
+                        next = target + 1;
+                        break;
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(returned)) => {
+                        pair = Some(returned);
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                        return Err(io::Error::other("HTTP/1 worker stopped"));
+                    }
+                }
+            }
+            if let Some((stream, peer)) = pair {
+                spawn_socket(stream, peer, app.clone(), transport);
+                next = 0;
+            }
         }
     }
 }
@@ -84,29 +163,41 @@ async fn serve_socket(
     transport: Transport,
 ) -> io::Result<()> {
     stream.get_ref().set_nodelay(true)?;
-    if tokio::time::timeout(Duration::from_secs(30), uses_h2(stream.get_ref())).await?? {
-        let service = tower::ServiceBuilder::new()
-            .map_request(move |mut req: hyper::Request<_>| {
-                req.extensions_mut().insert(ConnectInfo(peer));
-                if transport.static_only {
-                    req.extensions_mut().insert(Transport {
-                        regions: false,
-                        static_only: true,
-                    });
-                }
-                req
-            })
-            .service(app.into_service::<hyper::body::Incoming>());
-        return hyper::server::conn::http2::Builder::new(TokioExecutor::new())
-            .serve_connection(
-                TokioIo::new(stream.into_inner()),
-                TowerToHyperService::new(service),
-            )
-            .await
-            .map_err(io::Error::other);
-    }
     let mut config = ServerConfig::default();
     config.read_buffer_size = 1024;
+    let idle = config.keep_alive_timeout.unwrap();
+    let mut pending = bytes::BytesMut::with_capacity(1024);
+    let preface_timeout = idle.min(Duration::from_secs(30));
+    match tokio::time::timeout(preface_timeout, sniff_h2(stream.get_ref(), &mut pending)).await {
+        Ok(Ok(Sniff::Http2)) => {
+            let service = tower::ServiceBuilder::new()
+                .map_request(move |mut req: hyper::Request<_>| {
+                    req.extensions_mut().insert(ConnectInfo(peer));
+                    if transport.static_only {
+                        req.extensions_mut().insert(Transport {
+                            regions: false,
+                            static_only: true,
+                        });
+                    }
+                    req
+                })
+                .service(app.into_service::<hyper::body::Incoming>());
+            let io = PrefetchedTcp {
+                pending: pending.freeze(),
+                inner: stream.into_inner(),
+            };
+            let mut h2 = hyper::server::conn::http2::Builder::new(TokioExecutor::new());
+            h2.max_concurrent_streams(256);
+            return h2
+                .serve_connection(TokioIo::new(io), TowerToHyperService::new(service))
+                .await
+                .map_err(io::Error::other);
+        }
+        Ok(Ok(Sniff::Closed)) => return Ok(()),
+        Ok(Ok(Sniff::Http1)) => {}
+        Ok(Err(error)) => return Err(error),
+        Err(_) => return Ok(()),
+    }
     #[cfg(windows)]
     let socket = crate::transmitfile::socket(stream.get_ref())?;
     let (read, write) = stream.split();
@@ -118,8 +209,6 @@ async fn serve_socket(
     };
     let mut write = write;
     let tcp = read.get_ref().get_ref();
-    let mut pending = bytes::BytesMut::with_capacity(1024);
-    let idle = config.keep_alive_timeout.unwrap();
     loop {
         if pending.is_empty() {
             pending.reserve(1024);
@@ -178,19 +267,38 @@ async fn serve_socket(
     .await
 }
 
-async fn uses_h2(socket: &tokio::net::TcpStream) -> io::Result<bool> {
+enum Sniff {
+    Http1,
+    Http2,
+    Closed,
+}
+
+async fn sniff_h2(
+    socket: &tokio::net::TcpStream,
+    pending: &mut bytes::BytesMut,
+) -> io::Result<Sniff> {
     const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-    let mut buf = [0; 24];
     loop {
-        let n = socket.peek(&mut buf).await?;
-        if n == 0 || buf[..n] != PREFACE[..n] {
-            return Ok(false);
+        socket.readable().await?;
+        let n = match socket.try_read_buf(pending) {
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+            Err(e) => return Err(e),
+        };
+        if n == 0 {
+            return Ok(if pending.is_empty() {
+                Sniff::Closed
+            } else {
+                Sniff::Http1
+            });
         }
-        if n == PREFACE.len() {
-            return Ok(true);
+        let check_len = pending.len().min(PREFACE.len());
+        if pending[..check_len] != PREFACE[..check_len] {
+            return Ok(Sniff::Http1);
         }
-        // peek leaves a partial prefix readable until the rest arrives.
-        tokio::time::sleep(Duration::from_millis(1)).await;
+        if pending.len() >= PREFACE.len() {
+            return Ok(Sniff::Http2);
+        }
     }
 }
 
