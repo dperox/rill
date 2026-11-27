@@ -1,0 +1,43 @@
+name: Update latest image
+on:
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: rill-image-latest
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Point latest at the current stable GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ghcr.io/dperox/rill
+        run: |
+          set -euo pipefail
+          # Resolve inside the concurrency group so older events cannot roll latest back.
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          [[ "$release" == v?* ]]
+          source="$IMAGE:${release#v}"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+          # A release can be published while its versioned image is still building.
+          for attempt in {1..30}; do
+            if docker buildx imagetools inspect --raw "$source" > source.json; then break; fi
+            if (( attempt == 30 )); then exit 1; fi
+            sleep 15
+          done
+          jq -e '[.manifests[].platform | select(.os == "linux") | .architecture]
+            | contains(["amd64", "arm64"])' source.json
+          docker buildx imagetools create --tag "$IMAGE:latest" "$source"
+          docker buildx imagetools inspect --raw "$IMAGE:latest" > latest.json
+          cmp source.json latest.json
+          echo "$IMAGE:latest now matches $source"

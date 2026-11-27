@@ -34,6 +34,12 @@ Open <http://127.0.0.1:8080/>. The image serves `/app/public` as UID/GID
 includes Rill’s MIT license at `/usr/share/doc/rill/LICENSE` and Hyper’s MIT license
 at `/usr/share/doc/rill/notices/HYPER-LICENSE`.
 
+Pull the current stable release with `docker pull ghcr.io/dperox/rill`.
+Docker uses `:latest` when the tag is omitted. Rill updates that tag to match
+the image for the release marked latest on GitHub. Use a version tag such as
+`:0.1.1` to choose a specific release. Running containers keep their existing
+image until you recreate them with the updated image.
+
 ### Serve your files
 
 Mount a local `site` directory read-only over the bundled site.
