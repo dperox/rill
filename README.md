@@ -2,6 +2,12 @@
 
 Rill is a Rust web server, reverse proxy and load balancer. A single executable serves static files, routes HTTP requests to application servers, terminates TLS for HTTP/1.1, HTTP/2 and HTTP/3, and forwards TCP connections and UDP datagrams. Use environment variables for startup settings and an optional file for live updates to HTTP routes, per-host static roots, and TLS credentials. Its HTTP regression suite checks response status, headers and body bytes using Rust Anything.
 
+## Prompt for an AI agent
+
+```text
+Read and follow Rill's AGENTS.md at https://github.com/dperox/rill/blob/main/AGENTS.md
+```
+
 ## Run from source
 
 On Linux or Ubuntu under WSL2, install stable Rust with Cargo, a C compiler and a linker. For a fresh checkout, clone the project on the Linux filesystem. The default site is `public/`, resolved relative to the process working directory.
