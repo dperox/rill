@@ -106,7 +106,7 @@ def fixed_peer(root):
         thread = Thread(target=srv.serve_forever, daemon=True)
         thread.start()
         try:
-            with start(root, f"127.0.0.1:{srv.server_port}") as port:
+            with start(root, f"127.0.0.1:{srv.server_port}", RILL_FIXED_UPSTREAM="1") as port:
                 # Each request opens a fresh downstream connection. The upstream stays reusable.
                 def get(path):
                     status, _, body = request(port, path)

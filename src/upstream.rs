@@ -145,10 +145,10 @@ impl Transport {
         Ok(())
     }
 
-    pub fn new(peers: &[Endpoint]) -> io::Result<Self> {
+    pub fn new(peers: &[Endpoint], fixed_upstream: bool) -> io::Result<Self> {
         let mut builder = Client::builder(TokioExecutor::new());
         let fixed = match peers {
-            [peer] if peer.scheme == Scheme::HTTP => {
+            [peer] if fixed_upstream && peer.scheme == Scheme::HTTP => {
                 peer.authority.as_str().parse().ok().map(fixed::Fixed::new)
             }
             _ => None,

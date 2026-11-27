@@ -59,7 +59,7 @@ http {{
 """
 
 
-def start_container(running, site, image, port, frontend, origin="rill"):
+def start_container(running, site, image, port, frontend, origin="rill", fixed_upstream=False):
     name = f"rill-bench-{uuid4().hex[:10]}"
     # Read warm guest files and proxy over guest loopback for both servers.
     startup = f"""
@@ -70,7 +70,10 @@ LISTEN=127.0.0.1:9000 DOCUMENT_ROOT=/tmp/site/origin {origin} &
     if frontend == "nginx":
         startup += 'exec nginx -p /tmp/ -c /tmp/site/nginx.conf -e stderr'
     else:
-        startup += f'export UPSTREAMS=127.0.0.1:9000 DOCUMENT_ROOT=/tmp/site/front; exec {frontend}'
+        startup += 'export UPSTREAMS=127.0.0.1:9000 DOCUMENT_ROOT=/tmp/site/front; '
+        if fixed_upstream:
+            startup += 'export RILL_FIXED_UPSTREAM=1; '
+        startup += f'exec {frontend}'
     subprocess.run(
         ["container", "run", "-d", "--rm", "--name", name, "--cpus", "2", "--memory", "1G",
          "-p", f"127.0.0.1:{port}:8080", "-v", f"{site}:/fixtures:ro",
@@ -88,6 +91,7 @@ def main():
     parser.add_argument("--wrk", default="wrk")
     parser.add_argument("--nginx", help="also benchmark this native NGINX binary; --image must contain nginx and rill")
     parser.add_argument("--baseline-rill", type=Path, help="add a native baseline and use rill-base from the same image for all guest origins and the baseline frontend")
+    parser.add_argument("--fixed-upstream", action="store_true", help="enable RILL_FIXED_UPSTREAM only on the candidate frontends")
     parser.add_argument("--workload", choices=("all", "proxy", "static"), default="all")
     parser.add_argument("--rounds", type=int, default=3)
     args = parser.parse_args()
@@ -114,7 +118,8 @@ def main():
         workers = {"TOKIO_WORKER_THREADS": "1", "RILL_BLOCKING_THREADS": "1"}
         baseline = (args.baseline_rill or args.rill).resolve()
         upstream = {"UPSTREAMS": f"127.0.0.1:{origin}"}
-        processes = [(baseline, origin, "origin", {}), (args.rill.resolve(), native, "front", upstream)]
+        candidate_settings = dict(upstream, RILL_FIXED_UPSTREAM="1") if args.fixed_upstream else upstream
+        processes = [(baseline, origin, "origin", {}), (args.rill.resolve(), native, "front", candidate_settings)]
         if args.baseline_rill:
             processes.append((baseline, baseline_ports[0], "front", upstream))
         for binary, port, folder, settings in processes:
@@ -125,7 +130,7 @@ def main():
             ))
 
         guest_origin = "rill-base" if args.baseline_rill else "rill"
-        start_container(running, site, args.image, published, "rill", guest_origin)
+        start_container(running, site, args.image, published, "rill", guest_origin, args.fixed_upstream)
         servers = [("native", native), ("apple-container", published)]
         if args.nginx:
             config = root / "nginx.conf"

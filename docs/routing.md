@@ -39,7 +39,7 @@ When establishing the upstream connection fails for a GET or HEAD whose body is 
 
 ### Fixed upstream connections
 
-A route with one plaintext IP address and an explicit port automatically reuses HTTP/1.1 connections for bodyless, origin-form GET requests. Rill checks the current route, access policy and upstream health on every request. The backend receives the original path and query string. DNS names, HTTPS peers, upgrades and uploads use the general HTTP client.
+Set `RILL_FIXED_UPSTREAM=1` before startup to use a dedicated HTTP/1.1 connection pool for bodyless, origin-form GET requests on routes with one plaintext IP address and an explicit port. The default (`0`) uses the general HTTP client. Restart Rill to change the setting. Rill checks the current route, access policy and upstream health on every request. The backend receives the original path and query string. DNS names, HTTPS peers, upgrades and uploads use the general HTTP client.
 
 Each eligible pool reserves 48 idle connections for these GETs and 16 for other traffic. Idle connections expire after 90 seconds. If an idle socket closes, Rill can reconnect once when the HTTP client confirms the request was never sent. If the backend receives the request and disconnects before sending response headers, the client receives a gateway error. A reload gives the new route its own pool.
 

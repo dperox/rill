@@ -261,6 +261,7 @@ Key environment variables:
   RILL_CONFIG           Path to reloadable JSON configuration (sites, routes, tls)
   TLS_LISTEN            HTTPS/HTTP2/HTTP3 bind address (requires TLS_CERT/TLS_KEY or tls config)
   UPSTREAMS             Comma-separated default /api/ upstream endpoints
+  RILL_FIXED_UPSTREAM   Set to 1 for the single-peer GET fast path (default: 0)
   RILL_ACCESS_LOG       Set to 1 for JSON access records on stderr",
         env!("CARGO_PKG_VERSION")
     );
@@ -554,7 +555,12 @@ async fn run(
     let stream_chunk = static_io::stream_chunk_bytes()?;
     let root = PathBuf::from(env::var_os("DOCUMENT_ROOT").unwrap_or_else(|| "public".into()));
     let default_site = sites::Site::open(&root, stream_chunk)?;
-    let (live, tls_address) = reload::start(stream_chunk, check)?;
+    let fixed_upstream = match env_utf8("RILL_FIXED_UPSTREAM")?.as_deref() {
+        None | Some("0") => false,
+        Some("1") => true,
+        _ => return Err(io::Error::other("RILL_FIXED_UPSTREAM must be 0 or 1")),
+    };
+    let (live, tls_address) = reload::start(stream_chunk, check, fixed_upstream)?;
     let dispatch = Arc::new(Dispatch {
         live: live.clone(),
         default_site,
@@ -567,7 +573,7 @@ async fn run(
     }));
     let app = PlainApp {
         router: app,
-        direct: Some(dispatch),
+        direct: fixed_upstream.then_some(dispatch),
     };
     let initial_policies = live.borrow().policies.clone();
     let app = initial_policies.apply_inner(app, live.clone());
@@ -675,6 +681,8 @@ async fn run(
                         .into_make_service_with_connect_info::<std::net::SocketAddr>(),
                 )
                 .await
+            } else if app.direct.is_none() {
+                axum::serve(listener, app.router).await
             } else {
                 let service = tower::service_fn(move |req| {
                     let app = app.clone();

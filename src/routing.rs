@@ -106,6 +106,7 @@ pub fn load(
     definitions: Vec<Definition>,
     policy: &policy::Policies,
     start_probes: bool,
+    fixed_upstream: bool,
 ) -> io::Result<Vec<Route>> {
     let least = match env::var("RILL_HTTP_BALANCE").as_deref() {
         Ok("round_robin") | Err(env::VarError::NotPresent) => false,
@@ -148,7 +149,7 @@ pub fn load(
             .iter()
             .map(|s| upstream::Endpoint::parse(s))
             .collect::<io::Result<Vec<_>>>()?;
-        let client = upstream::Transport::new(&servers)?;
+        let client = upstream::Transport::new(&servers, fixed_upstream)?;
         let healthy = if health.is_some() {
             (0..servers.len()).map(|_| true.into()).collect()
         } else {

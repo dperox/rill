@@ -44,6 +44,7 @@ struct Source {
     chunk: usize,
     secure: bool,
     check: bool,
+    fixed_upstream: bool,
 }
 
 impl Source {
@@ -92,7 +93,7 @@ impl Source {
         };
         // Each generation owns its cache, including fills still running on retired routes.
         let policies = policy::Policies::from_env()?;
-        let routes = routing::load(definitions, &policies, !self.check)?;
+        let routes = routing::load(definitions, &policies, !self.check, self.fixed_upstream)?;
         Ok(Generation {
             sites,
             routes,
@@ -102,7 +103,11 @@ impl Source {
     }
 }
 
-pub fn start(chunk: usize, check: bool) -> io::Result<(Live, Option<String>)> {
+pub fn start(
+    chunk: usize,
+    check: bool,
+    fixed_upstream: bool,
+) -> io::Result<(Live, Option<String>)> {
     let address = env::var_os("TLS_LISTEN")
         .map(|s| {
             s.into_string()
@@ -113,6 +118,7 @@ pub fn start(chunk: usize, check: bool) -> io::Result<(Live, Option<String>)> {
         path: env::var_os("RILL_CONFIG").map(PathBuf::from),
         chunk,
         check,
+        fixed_upstream,
         secure: address.is_some(),
     });
     if check {
