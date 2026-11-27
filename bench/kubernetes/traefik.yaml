@@ -1,0 +1,36 @@
+deployment:
+  replicas: 3
+ingressClass:
+  isDefaultClass: false
+ingressRoute:
+  dashboard:
+    enabled: false
+providers:
+  kubernetesCRD:
+    enabled: false
+  kubernetesIngress:
+    namespaces:
+      - rill-bench
+service:
+  spec:
+    type: NodePort
+ports:
+  web:
+    expose:
+      default: false
+  websecure:
+    nodePort: 30443
+resources:
+  requests:
+    cpu: 500m
+    memory: 64Mi
+  limits:
+    cpu: "2"
+    memory: 256Mi
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: traefik

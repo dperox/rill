@@ -1,0 +1,2 @@
+profile,connections,round,requests,elapsed_s,requests_per_s,p95_ms,p99_ms,checked,invalid,static,api,download,connect_errors,read_errors,write_errors,timeouts,status_errors
+mixed,64,1,1422837,60.025,23704.05,5.208,7.022,1422837,0,995986,284569,142282,0,0,0,0,0
