@@ -1,14 +1,16 @@
 //! Serve ordinary files in small groups on Tokio's blocking pool.
 mod cache;
+mod response;
 pub use cache::AssetCache;
+pub(crate) use response::{has_repeated_condition, serve_static};
 
-use crate::{StaticConditions, static_condition_response, static_etag, static_precondition};
 use axum::{
     body::{Body, Bytes},
     extract::Request,
     http::{Method, header},
     response::Response,
 };
+use response::{StaticConditions, static_condition_response, static_etag, static_precondition};
 use std::{
     cell::RefCell,
     env,
@@ -57,7 +59,7 @@ thread_local! {
     static PENDING: RefCell<Weak<Batch>> = const { RefCell::new(Weak::new()) };
 }
 
-pub fn ordinary_file(
+fn ordinary_file(
     root: Arc<PathBuf>,
     stream_chunk: usize,
     req: &Request,
