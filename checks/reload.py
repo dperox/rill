@@ -1,4 +1,4 @@
-"""Check transactional SIGHUP reloads. Requires Linux and the openssl CLI."""
+"""Check transactional SIGHUP reloads. Requires Unix signals and the openssl CLI."""
 import argparse
 import asyncio
 import json

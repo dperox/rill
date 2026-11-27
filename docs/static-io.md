@@ -2,8 +2,7 @@
 
 Set `DOCUMENT_ROOT` to an existing directory. The source build defaults to
 `public/` relative to the current working directory. The Docker image uses
-`/app/public`. On WSL, use the Linux
-filesystem for workloads comparable to the published benchmarks.
+`/app/public`. On macOS, static responses use buffered reads. The sendfile path and immutable asset cache below are Linux-specific.
 
 ## Linux sendfile
 

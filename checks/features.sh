@@ -1,5 +1,5 @@
 #!/bin/sh
-# Run from a Linux checkout, including WSL.
+# Run from the repository checkout.
 set -eu
 cd "$(dirname "$0")/.."
 if [ -z "${RILL:-}" ]; then

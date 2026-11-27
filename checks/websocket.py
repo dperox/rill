@@ -1,4 +1,4 @@
-"""Check WebSocket proxying on plain HTTP and TLS. Requires Linux and openssl."""
+"""Check WebSocket proxying on plain HTTP and TLS. Requires Unix signals and openssl."""
 
 import base64
 from contextlib import ExitStack

@@ -10,7 +10,7 @@ Read and follow Rill's AGENTS.md at https://github.com/dperox/rill/blob/main/AGE
 
 ## Run from source
 
-On Linux or Ubuntu under WSL2, install stable Rust with Cargo, a C compiler and a linker. For a fresh checkout, clone the project on the Linux filesystem. The default site is `public/`, resolved relative to the process working directory.
+Build natively on Linux or macOS with stable Rust, Cargo, a C compiler and a linker. On macOS, the Xcode Command Line Tools provide the compiler and linker (`xcode-select --install`). On Windows, you can run the Linux commands inside a WSL2 distribution. The default site is `public/`, resolved relative to the process working directory.
 
 ```sh
 git clone https://github.com/dperox/rill.git
@@ -76,7 +76,7 @@ Rill defaults to **one blocking worker** for filesystem operations and DNS. Set 
 
 `cargo test --locked` runs the Rust unit tests. The [testing guide](docs/testing.md) covers the HTTP and transport integration suites, including how to replay the 56 recorded HTTP cases. The [implementation notes](docs/crates.md) describe the Rust dependencies and the patches in Rill’s Hyper fork.
 
-With one frontend CPU and 64 HTTP/1.1 clients on WSL2, Rill’s immutable asset cache increased throughput for a warm 256 KiB file from 17,481 to 21,016 requests/s. See the [measurements](bench/sendfile.md) and [benchmark commands](bench/README.md) for the workload and settings.
+On Linux, Rill can use sendfile and cache immutable assets. macOS uses buffered file delivery. See the [static file guide](docs/static-io.md) for platform behavior and the [benchmark report](bench/sendfile.md) for measured results and host details.
 
 ## Contributing
 

@@ -1,6 +1,6 @@
 # Working on Rill
 
-Build and test from the Linux checkout. The binary is `rill`. The Python checks start real listeners and accept `RILL` as the path to the binary under test. Use an absolute path when invoking a check from another directory.
+Build and test from the repository root on Linux or macOS. On Windows hosts, WSL2 is an option for running the Linux workflow. The binary is `rill`. The Python checks start real listeners and accept `RILL` as the path to the binary under test. Use an absolute path when invoking a check from another directory.
 
 Start with the [feature guide](docs/features.md) for a change in observable behavior. It connects each feature to its operator documentation and executable acceptance checks. Keep examples, tests and implementation in the same change. For a bug fix, an existing feature entry and a regression case can be enough.
 
@@ -13,7 +13,7 @@ Start with the [feature guide](docs/features.md) for a change in observable beha
 
 ## Deploy and verify Rill
 
-- **Linux or WSL.** From the repo root, run `cargo build --release --locked`. Use `./target/release/rill config test` for preflight, then start the same binary with the same environment. Check a known URL for its expected status and body.
+- **Native Linux or macOS.** From the repo root, run `cargo build --release --locked`. Use `./target/release/rill config test` for preflight, then start the same binary with the same environment. Check a known URL for its expected status and body.
 - **Containers.** Build the [Dockerfile](deploy/Dockerfile) from the repo root. Run the image with `config test` as its arguments and the same read-only mounts and environment intended for service. Site roots and key files must be readable by UID 10001. For Docker commands and volume layouts, use the [deployment guide](docs/deployment.md).
 - **Kubernetes.** Check the intended context and namespace. Make the image available to the nodes, then apply the [manifest](deploy/kubernetes.yaml). Wait for `kubectl rollout status deployment/rill`, verify both replicas are ready, and test an HTTP response through the Service. The base manifest exposes HTTP on 8080. For HTTP/3, verify the TLS port over UDP as well as TCP.
 - **Configuration updates.** On Unix, publish routes, site roots and certificates together using the [reload procedure](docs/reload.md). Check the acceptance or rejection message and exercise the affected host on a fresh connection. Roll out a new process for startup settings such as listeners and access logging.

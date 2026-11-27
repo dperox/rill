@@ -2,7 +2,7 @@
 
 Describe a feature in terms of what a client or operator can do. A proposal can start as a [feature request](../.github/ISSUE_TEMPLATE/feature.md). Include one example of success and one failure the implementation must handle. Deliver one independently testable behavior at a time.
 
-On Linux or WSL, `./checks/features.sh` exercises reloads, WebSockets, configuration migration and validation, per-host static roots, access logs, redirects, certificate selection, and upstream failover. The table lists the separate checks for other capabilities. Build prerequisites and invocation details are in the [test guide](testing.md).
+From the repository root, `./checks/features.sh` exercises reloads, WebSockets, configuration migration and validation, per-host static roots, access logs, redirects, certificate selection, and upstream failover. The table lists the separate checks for other capabilities. Build prerequisites and invocation details are in the [test guide](testing.md).
 
 ## Acceptance contracts
 

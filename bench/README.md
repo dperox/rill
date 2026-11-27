@@ -6,7 +6,7 @@ and [connections.py](connections.py) for idle persistent connections. The
 
 ## Throughput and latency
 
-Run from the repository root on Linux or WSL2 with Python 3, `taskset`, and `wrk` with Lua support. Choose distinct permitted CPUs on separate cores using `lscpu -e=CPU,CORE`. Rill runs on one frontend core. Proxy workloads use a separate Rill process to serve the upstream file on another core. The driver verifies the status and body of each response and samples frontend process RSS every 200 ms.
+Run from the repository root on Linux with Python 3, `taskset`, and `wrk` with Lua support. Choose distinct permitted CPUs on separate cores using `lscpu -e=CPU,CORE`. Rill runs on one frontend core. Proxy workloads use a separate Rill process to serve the upstream file on another core. The driver verifies the status and body of each response and samples frontend process RSS every 200 ms.
 
 ```bash
 cargo build --release --locked
