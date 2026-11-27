@@ -3,7 +3,7 @@ name: rust-feature-development
 description: Use when implementing or reviewing Rust changes in Rill, including request dispatch, static file responses, upstream routing, and transport behavior.
 ---
 
-Rill is a Rust 2024 binary running on Tokio. Cargo.toml declares no minimum Rust version or package feature flags. CI exercises stable Rust on Linux.
+Rill is a Rust 2024 binary running on Tokio. Cargo.toml declares no minimum Rust version or package feature flags. CI exercises stable Rust on Linux and macOS.
 
 1. Identify the operator-visible success and failure cases in [the feature guide](../../../docs/features.md). Use the [acceptance workflow](../rill-feature/SKILL.md) to select a live check.
 2. Trace the request from src/main.rs. Keep listener and router wiring there. Put file response and validator semantics in src/static_io/response.rs, blocking file work in src/static_io.rs, and asset caching in src/static_io/cache.rs. Route selection belongs in src/routing.rs and backend connections in src/upstream.rs. Consult the [transport skill](../rill-transport/SKILL.md) for upgrades, direct writes or TLS.

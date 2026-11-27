@@ -16,7 +16,9 @@ Run the sample site with Docker:
 docker run --rm -p 127.0.0.1:8080:8080 ghcr.io/dperox/rill:0.1.1
 ```
 
-Open <http://127.0.0.1:8080/> to see **Rill is running**. You can also download a Linux or Windows executable. [Downloads](https://github.com/dperox/rill/releases/latest) · [Deployment guide](docs/deployment.md)
+Open <http://127.0.0.1:8080/> to see **Rill is running**. Native executables are available for macOS (Apple silicon and Intel), Linux, and Windows. [Downloads](https://github.com/dperox/rill/releases/latest) · [Deployment guide](docs/deployment.md)
+
+On Apple silicon, Apple’s `container` can run the same image. [Run on a Mac](docs/deployment.md#macos) · [Native and Apple container benchmarks](bench/macos.md)
 
 ## Already using NGINX?
 

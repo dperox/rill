@@ -54,8 +54,8 @@ class Backend(BaseHTTPRequestHandler):
         pass
 
 
-def request(port, path="/", method="GET", headers=None, source="127.0.0.1"):
-    connection = HTTPConnection("127.0.0.1", port, timeout=5, source_address=(source, 0))
+def request(port, path="/", method="GET", headers=None, host="127.0.0.1"):
+    connection = HTTPConnection(host, port, timeout=5)
     connection.request(method, path, headers=headers or {})
     response = connection.getresponse()
     result = response.status, dict((k.lower(), v) for k, v in response.getheaders()), response.read()
@@ -137,18 +137,24 @@ def cache_checks(root, backend):
 
 
 def access_checks(root, backend):
-    with running(root, backend, ALLOW_IPS="127.0.0.0/8", DENY_IPS="127.0.0.2") as port:
+    # Exercise two peer identities using only the standard loopback addresses.
+    with socket.socket(socket.AF_INET6) as listener:
+        listener.bind(("::1", 0))
+        v6_port = listener.getsockname()[1]
+    second_listener = f"[::1]:{v6_port}"
+    with running(root, backend, RILL_STATIC_LISTEN=second_listener,
+                 ALLOW_IPS="127.0.0.0/8,::1", DENY_IPS="::1") as port:
         assert request(port)[0] == 200
-        assert request(port, source="127.0.0.2", headers={"X-Forwarded-For": "127.0.0.1"})[0] == 403
-        assert request(port, headers={"X-Forwarded-For": "127.0.0.2"})[0] == 200
+        assert request(v6_port, host="::1", headers={"X-Forwarded-For": "127.0.0.1"})[0] == 403
+        assert request(port, headers={"X-Forwarded-For": "::1"})[0] == 200
     with running(root, backend, ALLOW_IPS="::1/128,192.0.2.1") as port:
         assert request(port)[0] == 403
-    with running(root, backend, RATE_LIMIT="2", CACHE_TTL="10") as port:
+    with running(root, backend, RILL_STATIC_LISTEN=second_listener, RATE_LIMIT="2", CACHE_TTL="10") as port:
         assert request(port, "/api/limited")[0] == 200
         assert request(port, "/api/limited")[1]["age"] == "0"
         status, headers, _ = request(port)
         assert status == 429 and headers["retry-after"] == "1"
-        assert request(port, source="127.0.0.2")[0] == 200
+        assert request(v6_port, host="::1")[0] == 200
         time.sleep(1.05)
         assert request(port)[0] == 200
 

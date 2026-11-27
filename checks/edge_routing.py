@@ -99,7 +99,8 @@ if __name__ == "__main__":
     parser.add_argument("--http3", action="store_true", help="verify named QUIC certificate after reload using aioquic")
     args = parser.parse_args()
     with TemporaryDirectory() as tmp, socket.socket() as refused, ThreadingHTTPServer(("127.0.0.1", 0), Origin) as backend:
-        refused.bind(("127.0.0.1", 0))
+        # Reserve a non-listening port that also returns ECONNREFUSED on macOS.
+        refused.connect(backend.server_address)
         backend.label = "healthy"
         Thread(target=backend.serve_forever, daemon=True).start()
         try:

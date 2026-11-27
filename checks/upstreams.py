@@ -1,4 +1,4 @@
-"""Check health routing, TLS client/server identity and coalesced cache misses in WSL."""
+"""Check health routing, TLS client/server identity and coalesced cache misses."""
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -46,9 +46,14 @@ class Origin(BaseHTTPRequestHandler):
         pass
 
 
+class OriginServer(ThreadingHTTPServer):
+    # Admit the full eight-client burst even before the accept loop runs.
+    request_queue_size = 16
+
+
 @contextmanager
 def origin(label, port=0, tls=None):
-    with ThreadingHTTPServer(("127.0.0.1", port), Origin) as srv:
+    with OriginServer(("127.0.0.1", port), Origin) as srv:
         srv.label, srv.calls, srv.lock, srv.healthy = label, Counter(), Lock(), True
         srv.started, srv.release, srv.version = Event(), Event(), b"old"
         if tls:
