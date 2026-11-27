@@ -1,7 +1,7 @@
 mod access_log;
 mod edge;
 mod migration;
-#[cfg(target_os = "linux")]
+#[cfg(any(windows, target_os = "linux"))]
 mod plain;
 mod policy;
 mod reload;
@@ -11,6 +11,8 @@ mod sendfile;
 mod sites;
 mod static_io;
 mod streams;
+#[cfg(windows)]
+mod transmitfile;
 mod upstream;
 mod websocket;
 use axum::serve::ListenerExt;
@@ -313,7 +315,7 @@ async fn run(check: bool) -> io::Result<()> {
     let app = live.borrow().policies.apply(app, live.clone());
     let (app, logging) = access_log::configure(app)?;
     let requires_client_addr = logging || live.borrow().policies.requires_client_addr();
-    #[cfg(target_os = "linux")]
+    #[cfg(any(windows, target_os = "linux"))]
     let compression = live.borrow().policies.compression_enabled();
     let address = env::var("LISTEN").unwrap_or_else(|_| {
         format!(
@@ -323,7 +325,8 @@ async fn run(check: bool) -> io::Result<()> {
     });
     let enable_sendfile = match env::var("RILL_SENDFILE").as_deref() {
         Ok("0") => false,
-        Ok("1") | Err(env::VarError::NotPresent) => true,
+        Ok("1") => true,
+        Err(env::VarError::NotPresent) => cfg!(target_os = "linux"),
         _ => return Err(io::Error::other("RILL_SENDFILE must be 0 or 1")),
     };
     let streams = streams::configured()?;
@@ -347,11 +350,11 @@ async fn run(check: bool) -> io::Result<()> {
         jobs.spawn(async move { edge::serve(&address, secure, live).await });
     }
     jobs.spawn(async move {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(windows, target_os = "linux"))]
         if enable_sendfile && !compression {
             return plain::serve(listener, app, requires_client_addr).await;
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(windows, target_os = "linux")))]
         let _ = enable_sendfile;
         let listener = listener.tap_io(|stream| {
             if let Err(error) = stream.set_nodelay(true) {

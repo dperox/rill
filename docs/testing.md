@@ -60,6 +60,10 @@ python3 checks/asset_cache.py
 
 These checks start loopback listeners and use temporary fixtures. The stream check exercises TCP, UDP and mail backends. See the [TLS guide](edge.md) for the separate HTTPS and QUIC check and the [benchmark guide](../bench/README.md) for throughput and idle-memory comparisons.
 
+## Native Windows file delivery
+
+From the checkout in PowerShell, point `RILL` at an absolute Windows executable path and run `python checks/windows_transmitfile.py`. The check enables TransmitFile, holds two large downloads open while a third completes, then resets the slow connections. It also exercises pipelining, conditional and range responses, and the gzip fallback.
+
 ## Feature acceptance
 
 Run `./checks/features.sh` from the repository root. It builds a locked debug binary, then runs the reload, WebSocket, static site, access log, redirect, SNI, failover and migration CLI acceptance checks against that binary. Set `RILL` to an absolute binary path to test an existing build instead.

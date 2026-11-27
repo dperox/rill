@@ -199,7 +199,7 @@ impl Policies {
         })
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(windows, target_os = "linux"))]
     pub fn compression_enabled(&self) -> bool {
         self.compress
     }

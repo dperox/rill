@@ -24,6 +24,12 @@ Truncating an actively transferring file can close that connection before the
 response completes. Publish replacements by renaming a complete file into
 place.
 
+## Windows TransmitFile
+
+Native Windows uses buffered static delivery by default. Set `RILL_SENDFILE=1` at startup to use Winsock TransmitFile for eligible plaintext HTTP/1 GET responses larger than 64 KiB. The dispatcher flushes the response headers before starting the transfer and waits for the advertised byte count before processing the next response on that connection.
+
+Rill reserves at most two direct transfers per process. Additional downloads immediately take the buffered path. Two dedicated completion workers keep slow transfers off the Tokio network and filesystem pools. A reset or short transfer ends that response. HEAD, byte ranges, TLS, and gzip keep their existing handling. The immutable asset cache is Linux-only. See the [Windows benchmarks](../bench/windows.md).
+
 ## Immutable assets
 
 Set `RILL_ASSET_CACHE_ENTRIES=128` to retain up to 128 versioned files across requests. The default is 0 (disabled) and the maximum is 4096. Use this only when a changed asset gets a new filename. A name such as `app.8f31.js` contains a dot-delimited hexadecimal fingerprint of 4–64 digits immediately before the extension. Rill recognizes the filename convention without checking a content digest. A query string such as `app.js?v=8f31` does not version the filename.

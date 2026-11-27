@@ -18,7 +18,7 @@ $env:LISTEN = '127.0.0.1:8080'
 if ($LASTEXITCODE -eq 0) { .\rill.exe }
 ```
 
-In a second shell, run `curl.exe -i http://127.0.0.1:8080/` and verify the expected page. Native checks covered static GET and HEAD, HTTPS, HTTP proxying and policies, TCP and UDP forwarding, and configuration preflight. On Windows, restart Rill to apply a new configuration.
+In a second shell, run `curl.exe -i http://127.0.0.1:8080/` and verify the expected page. Native checks covered static GET and HEAD, HTTPS, HTTP proxying and policies, TCP and UDP forwarding, and configuration preflight. On Windows, restart Rill to apply a new configuration. To opt into direct transfer of large plaintext static responses, set `RILL_SENDFILE=1`. [Windows file settings](static-io.md#windows-transmitfile)
 
 ## Docker
 

@@ -44,7 +44,7 @@ pub fn stream_chunk_bytes() -> io::Result<usize> {
 struct FileJob {
     path: PathBuf,
     head: bool,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(windows, target_os = "linux"))]
     socket: Option<Arc<tokio::net::tcp::OwnedWriteHalf>>,
     stream_chunk: usize,
     #[cfg(target_os = "linux")]
@@ -87,7 +87,7 @@ fn ordinary_file(
     }
 
     let (reply, receive) = oneshot::channel();
-    #[cfg(target_os = "linux")]
+    #[cfg(any(windows, target_os = "linux"))]
     let socket = crate::plain::socket(req.version());
     #[cfg(target_os = "linux")]
     let cache = if let (Some(cache), Some(socket)) = (cache, socket.as_ref()) {
@@ -108,7 +108,7 @@ fn ordinary_file(
     let job = FileJob {
         path,
         head,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(windows, target_os = "linux"))]
         socket,
         #[cfg(target_os = "linux")]
         cache,
@@ -260,6 +260,16 @@ fn read_file(job: &FileJob) -> io::Result<FileResponse> {
     if let Some(socket) = &job.socket {
         return response
             .extension(direct_body(socket.clone(), file, len))
+            .body(Body::empty())
+            .map(FileResponse::Separate)
+            .map_err(io::Error::other);
+    }
+    #[cfg(windows)]
+    if let Some(socket) = &job.socket
+        && let Some(slot) = crate::transmitfile::reserve()
+    {
+        return response
+            .extension(slot.body(socket.clone(), file, len))
             .body(Body::empty())
             .map(FileResponse::Separate)
             .map_err(io::Error::other);
