@@ -526,7 +526,7 @@ async fn run(
             .chain(tls_address.as_ref().map(|a| ("TLS_LISTEN", a)))
             .chain(static_addr.as_ref().map(|a| ("RILL_STATIC_LISTEN", a)))
         {
-            let addrs: Vec<_> = tokio::net::lookup_host(addr)
+            let addrs: std::collections::HashSet<_> = tokio::net::lookup_host(addr)
                 .await
                 .map_err(|e| io::Error::other(format!("{name} ({addr}): {e}")))?
                 .collect();
@@ -536,7 +536,7 @@ async fn run(
                 )));
             }
             for sock in addrs {
-                if !resolved_tcp.insert(sock) {
+                if sock.port() != 0 && !resolved_tcp.insert(sock) {
                     return Err(io::Error::other(format!(
                         "conflicting listener address {sock} on {name}"
                     )));
@@ -544,7 +544,7 @@ async fn run(
             }
         }
         for stream in &streams {
-            if stream.tcp && !resolved_tcp.insert(stream.address) {
+            if stream.tcp && stream.address.port() != 0 && !resolved_tcp.insert(stream.address) {
                 return Err(io::Error::other(format!(
                     "conflicting TCP listener address {}",
                     stream.address
