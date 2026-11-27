@@ -120,7 +120,9 @@ container. See the [routing guide](routing.md) for host and path rules.
 ### Serve HTTPS and HTTP/3
 
 Mount a certificate chain and private key read-only. In this example, both
-files in `tls/` are readable by UID/GID `10001:10001`.
+files in `tls/` are readable by UID/GID `10001:10001`. Because the cleartext
+`LISTEN` port (`0.0.0.0:8080` in containers; `127.0.0.1:8080` or `127.0.0.1:$PORT`
+natively) stays active, set `RILL_HTTPS_REDIRECT` to redirect HTTP clients to HTTPS.
 
 ```sh
 docker run --rm \
@@ -129,6 +131,7 @@ docker run --rm \
   --mount "type=bind,src=$PWD/tls,dst=/run/tls,readonly" \
   -e TLS_LISTEN=0.0.0.0:8443 \
   -e TLS_CERT=/run/tls/tls.crt -e TLS_KEY=/run/tls/tls.key \
+  -e RILL_HTTPS_REDIRECT=app.example:8443 \
   rill:local
 ```
 
@@ -188,11 +191,9 @@ deployments.
 
 ### Add TCP and UDP forwarding
 
-The base manifest enables HTTP only. To restore the optional stream setup
-from the earlier `rill-streams` ConfigMap example, keep your populated
-ConfigMap and apply the Deployment patch and Service below. For a new setup,
-replace the example IP addresses with numeric upstream socket addresses
-that the Pods can reach, then create the ConfigMap.
+The base manifest enables HTTP only. Create a `rill-streams` ConfigMap with
+numeric upstream socket addresses that the Pods can reach, then apply the
+Deployment and Service patches below.
 
 ```sh
 kubectl create configmap rill-streams \
@@ -256,7 +257,9 @@ See the [transport guide](streams.md) for pool and balancing syntax.
 ### Add HTTPS and HTTP/3
 
 Create a TLS Secret in the Deployment’s namespace. This patch mounts it
-read-only and enables TLS on TCP and UDP port 8443. The probes stay on 8080.
+read-only, enables TLS on TCP and UDP port 8443, and sets `RILL_HTTPS_REDIRECT`
+so cleartext HTTP traffic on port 8080 redirects to HTTPS. The TCP probes stay
+on 8080 and continue to succeed with redirects enabled.
 
 ```sh
 kubectl create secret tls rill-tls --cert=./tls/tls.crt --key=./tls/tls.key

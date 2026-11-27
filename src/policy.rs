@@ -7,15 +7,15 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use http_body_util::BodyExt;
-use ipnet::IpNet;
+use ipnet::{IpNet, Ipv4Net};
 use std::{
     collections::HashMap,
     env, io,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime},
 };
-use tokio::sync::{Semaphore, watch};
+use tokio::sync::{Semaphore, mpsc, watch};
 use tower_http::{
     compression::CompressionLayer,
     compression::predicate::{DefaultPredicate, Predicate},
@@ -80,7 +80,11 @@ pub struct Waiter {
 impl Waiter {
     pub async fn cached_response(mut self) -> Option<Response> {
         let _ = tokio::time::timeout(Duration::from_secs(2), self.done.changed()).await;
-        self.cache.state.lock().unwrap().hit(&self.key)
+        self.cache
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .hit(&self.key)
     }
 }
 
@@ -92,7 +96,12 @@ struct Flight {
 // Closing the channel releases every follower, including on cancellation.
 impl Drop for Flight {
     fn drop(&mut self) {
-        self.cache.state.lock().unwrap().flights.remove(&self.key);
+        self.cache
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .flights
+            .remove(&self.key);
     }
 }
 
@@ -107,6 +116,7 @@ struct CacheKey {
     secure: bool,
     authority: Option<String>,
     target: String,
+    normalized_target: String,
     headers: [Vec<HeaderValue>; 5],
 }
 
@@ -141,6 +151,21 @@ fn number(name: &str) -> io::Result<u64> {
         .map(Option::unwrap_or_default)
 }
 
+fn canonicalize_net(net: IpNet) -> IpNet {
+    match net {
+        IpNet::V6(v6) if v6.prefix_len() >= 96 => {
+            if let Some(v4) = v6.addr().to_ipv4_mapped() {
+                let prefix = v6.prefix_len() - 96;
+                if let Ok(mapped) = Ipv4Net::new(v4, prefix) {
+                    return IpNet::V4(mapped.trunc());
+                }
+            }
+            IpNet::V6(v6)
+        }
+        other => other,
+    }
+}
+
 fn networks(name: &str) -> io::Result<Vec<IpNet>> {
     variable(name)?
         .unwrap_or_default()
@@ -150,7 +175,12 @@ fn networks(name: &str) -> io::Result<Vec<IpNet>> {
             let value = value.trim();
             value
                 .parse::<IpNet>()
-                .or_else(|_| value.parse::<IpAddr>().map(IpNet::from))
+                .map(canonicalize_net)
+                .or_else(|_| {
+                    value
+                        .parse::<IpAddr>()
+                        .map(|ip| IpNet::from(ip.to_canonical()))
+                })
                 .map_err(|_| invalid(name, "must contain only IP addresses or CIDR networks"))
         })
         .collect()
@@ -213,7 +243,7 @@ impl Policies {
             || self.access.limiter.is_some()
     }
 
-    pub fn apply(&self, mut app: Router, live: crate::reload::Live) -> Router {
+    pub fn apply_inner(&self, mut app: Router, live: crate::reload::Live) -> Router {
         if self.compress {
             app = app
                 .layer(middleware::from_fn(mark_for_compression))
@@ -223,14 +253,18 @@ impl Policies {
                 )
                 .layer(middleware::from_fn(weaken_compressed_etag));
         }
+        if self.cache.is_some() {
+            app = app.layer(middleware::from_fn_with_state(live, invalidate_on_write));
+        }
+        app
+    }
+
+    pub fn apply_access(&self, mut app: Router) -> Router {
         if self.requires_client_addr() {
             app = app.layer(middleware::from_fn_with_state(
                 self.access.clone(),
                 check_access,
             ));
-        }
-        if self.cache.is_some() {
-            app = app.layer(middleware::from_fn_with_state(live, invalidate_on_write));
         }
         app
     }
@@ -242,7 +276,7 @@ impl Policies {
         let Some(key) = CacheKey::from_request(request) else {
             return Lookup::Miss(None);
         };
-        let mut state = cache.state.lock().unwrap();
+        let mut state = cache.state.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(response) = state.hit(&key) {
             return Lookup::Hit(response);
         }
@@ -290,29 +324,71 @@ impl Policies {
         let (parts, mut body) = response.into_parts();
         let length = body.size_hint().exact().unwrap() as usize;
         let headers = owned_headers(&parts.headers);
-        let stream = async_stream::stream! {
-            let _permit = permit;
+        let fill_deadline = tokio::time::Instant::now() + ttl.min(Duration::from_secs(15));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        // Decouple upstream cache population (bounded to <= 64 KiB) from
+        // downstream client reads so slow readers cannot pin fill permits
+        // or coalescing flights indefinitely.
+        tokio::spawn(async move {
+            let mut permit = Some(permit);
             let mut fill = Some((pending, headers, Vec::with_capacity(length)));
-            while let Some(frame) = body.frame().await {
+            loop {
+                let next = if fill.is_some() {
+                    match tokio::time::timeout_at(fill_deadline, body.frame()).await {
+                        Ok(frame) => frame,
+                        Err(_) => {
+                            fill = None;
+                            permit = None;
+                            body.frame().await
+                        }
+                    }
+                } else {
+                    body.frame().await
+                };
+                let Some(frame) = next else {
+                    break;
+                };
                 let data = frame.as_ref().ok().and_then(|frame| frame.data_ref());
                 if let (Some((_, _, bytes)), Some(data)) = (&mut fill, data)
                     && data.len() <= length - bytes.len()
                 {
                     bytes.extend_from_slice(data);
-                    // The upstream HTTP/1 decoder knows there can be no more
-                    // frames when its fixed content-length is exhausted.
-                    if bytes.len() == length && body.is_end_stream()
+                    if bytes.len() == length
+                        && body.is_end_stream()
                         && inserted.elapsed() < ttl
                         && let Some((pending, headers, bytes)) = fill.take()
                     {
-                        cache.state.lock().unwrap().insert(pending.key, pending.generation, Entry {
-                            inserted, ttl, initial_age, headers,
-                            body: Bytes::from(bytes),
-                        });
+                        cache
+                            .state
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(
+                                pending.key,
+                                pending.generation,
+                                Entry {
+                                    inserted,
+                                    ttl,
+                                    initial_age,
+                                    headers,
+                                    body: Bytes::from(bytes),
+                                },
+                            );
+                        permit = None;
                     }
                 } else {
                     fill = None;
+                    permit = None;
                 }
+                let _ = tx.send(frame);
+                if tx.is_closed() && fill.is_none() {
+                    break;
+                }
+            }
+            drop(fill);
+            drop(permit);
+        });
+        let stream = async_stream::stream! {
+            while let Some(frame) = rx.recv().await {
                 yield frame;
             }
         };
@@ -401,8 +477,10 @@ impl CacheKey {
         {
             return None;
         }
+        let normalized = normalized_target(request.uri())?;
         Some(Self {
             target: target.to_owned(),
+            normalized_target: normalized,
             secure: request.extensions().get::<SecureTransport>().is_some(),
             authority: request.uri().authority().map(ToString::to_string),
             headers: allowed.map(|name| headers.get_all(name).iter().map(owned_header).collect()),
@@ -491,13 +569,34 @@ fn cache_freshness(response: &Response, cap: u64) -> Option<(Duration, u64)> {
     (remaining > 0).then(|| (Duration::from_secs(remaining), initial_age))
 }
 
+fn normalized_target(uri: &axum::http::Uri) -> Option<String> {
+    let pq = uri.path_and_query()?;
+    let norm = crate::routing::normalize_path(pq.path());
+    Some(match pq.query() {
+        Some(query) => format!("{norm}?{query}"),
+        None => norm,
+    })
+}
+
+fn rate_limit_key(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V4(v4) => IpAddr::V4(v4),
+        // Bucket IPv6 peers by /64 prefix to prevent trivial /64 rotation
+        // from bypassing RATE_LIMIT or exhausting MAX_IPS.
+        IpAddr::V6(v6) => {
+            let bits = u128::from(v6) & (!0u128 << 64);
+            IpAddr::V6(Ipv6Addr::from(bits))
+        }
+    }
+}
+
 async fn invalidate_on_write(
     State(live): State<crate::reload::Live>,
     request: Request,
     next: Next,
 ) -> Response {
     let target = (!request.method().is_safe())
-        .then(|| request.uri().path_and_query().map(ToString::to_string))
+        .then(|| normalized_target(request.uri()))
         .flatten();
     let response = next.run(request).await;
     if let Some(target) = target
@@ -508,8 +607,10 @@ async fn invalidate_on_write(
         let Some(cache) = &generation.policies.cache else {
             return response;
         };
-        let mut state = cache.state.lock().unwrap();
-        state.entries.retain(|key, _| key.target != target);
+        let mut state = cache.state.lock().unwrap_or_else(|e| e.into_inner());
+        state
+            .entries
+            .retain(|key, _| key.normalized_target != target);
         state.generation = state.generation.wrapping_add(1);
     }
     response
@@ -527,19 +628,20 @@ async fn check_access(State(access): State<Arc<Access>>, request: Request, next:
     }
 
     if let Some(limiter) = &access.limiter {
-        let mut window = limiter.window.lock().unwrap();
+        let key = rate_limit_key(ip);
+        let mut window = limiter.window.lock().unwrap_or_else(|e| e.into_inner());
         if window.start.elapsed() >= WINDOW {
             window.start = Instant::now();
             window.counts.clear();
         }
         let at_capacity = window.counts.len() >= MAX_IPS;
-        let accepted = match window.counts.get_mut(&ip) {
+        let accepted = match window.counts.get_mut(&key) {
             Some(count) if *count < limiter.limit => {
                 *count += 1;
                 true
             }
             None if !at_capacity => {
-                window.counts.insert(ip, 1);
+                window.counts.insert(key, 1);
                 true
             }
             _ => false,
@@ -606,4 +708,40 @@ async fn weaken_compressed_etag(request: Request, next: Next) -> Response {
         *etag = HeaderValue::from_bytes(&weak).unwrap();
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn canonicalize_ipv4_mapped_ipv6_cidrs_and_hosts() {
+        let single = canonicalize_net("::ffff:203.0.113.5/128".parse::<IpNet>().unwrap());
+        assert_eq!(single, "203.0.113.5/32".parse::<IpNet>().unwrap());
+        assert!(single.contains(&IpAddr::V4(Ipv4Addr::new(203, 0, 113, 5))));
+
+        let cidr = canonicalize_net("::ffff:10.0.0.0/104".parse::<IpNet>().unwrap());
+        assert_eq!(cidr, "10.0.0.0/8".parse::<IpNet>().unwrap());
+        assert!(cidr.contains(&IpAddr::V4(Ipv4Addr::new(10, 42, 1, 2))));
+        assert!(!cidr.contains(&IpAddr::V4(Ipv4Addr::new(11, 0, 0, 1))));
+
+        let native_v6 = canonicalize_net("2001:db8::/32".parse::<IpNet>().unwrap());
+        assert_eq!(native_v6, "2001:db8::/32".parse::<IpNet>().unwrap());
+    }
+
+    #[test]
+    fn ipv6_rate_limit_key_buckets_by_slash_64() {
+        let a = IpAddr::V6("2001:db8:1:2::1".parse::<Ipv6Addr>().unwrap());
+        let b = IpAddr::V6(
+            "2001:db8:1:2:ffff:ffff:ffff:fffe"
+                .parse::<Ipv6Addr>()
+                .unwrap(),
+        );
+        let c = IpAddr::V6("2001:db8:1:3::1".parse::<Ipv6Addr>().unwrap());
+        assert_eq!(rate_limit_key(a), rate_limit_key(b));
+        assert_ne!(rate_limit_key(a), rate_limit_key(c));
+        let v4 = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        assert_eq!(rate_limit_key(v4), v4);
+    }
 }

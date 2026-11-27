@@ -49,9 +49,17 @@ struct Source {
 impl Source {
     fn load(&self) -> io::Result<Generation> {
         let file: FileConfig = match &self.path {
-            Some(path) => serde_json::from_slice(&fs::read(path)?).map_err(io::Error::other)?,
+            Some(path) => {
+                let bytes = fs::read(path).map_err(|e| {
+                    io::Error::new(e.kind(), format!("RILL_CONFIG ({}): {e}", path.display()))
+                })?;
+                serde_json::from_slice(&bytes).map_err(|e| {
+                    io::Error::other(format!("RILL_CONFIG ({}): {e}", path.display()))
+                })?
+            }
             None => FileConfig::default(),
         };
+        crate::upstream::Transport::validate_env()?;
         let base = self
             .path
             .as_deref()

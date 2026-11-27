@@ -1,7 +1,7 @@
 name: Update latest image
 on:
   release:
-    types: [published, edited]
+    types: [published, edited, deleted]
   workflow_dispatch:
 
 permissions:
@@ -25,7 +25,7 @@ jobs:
           set -euo pipefail
           # Resolve inside the concurrency group so older events cannot roll latest back.
           release=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
-          [[ "$release" == v?* ]]
+          [[ "$release" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
           source="$IMAGE:${release#v}"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
@@ -37,7 +37,8 @@ jobs:
           done
           jq -e '[.manifests[].platform | select(.os == "linux") | .architecture]
             | contains(["amd64", "arm64"])' source.json
-          docker buildx imagetools create --tag "$IMAGE:latest" "$source"
+          digest="sha256:$(sha256sum source.json | awk '{print $1}')"
+          docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE@$digest"
           docker buildx imagetools inspect --raw "$IMAGE:latest" > latest.json
           cmp source.json latest.json
-          echo "$IMAGE:latest now matches $source"
+          echo "$IMAGE:latest now matches $source ($digest)"

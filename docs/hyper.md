@@ -1,9 +1,11 @@
 # HTTP transports
 
 Rill uses the crates.io release of Hyper for upstream requests, TLS HTTP/1 and
-HTTP/2. On the main plaintext port, the direct-file configuration selects
+HTTP/2. On the main `LISTEN` plaintext port, the direct-file configuration selects
 http-kit-h1 for HTTP/1 and stock Hyper for a prior-knowledge HTTP/2 connection.
-Compression or disabled direct file delivery selects the ordinary Axum listener.
+Compression or disabled direct file delivery selects the ordinary Axum listener
+on the main `LISTEN` port (`RILL_STATIC_LISTEN` always uses `http-kit-h1` /
+prior-knowledge HTTP/2).
 
 A complete small GET or HEAD uses the published HTTP/1 parser and response
 encoder. The connection waits for the next request with a small receive buffer.

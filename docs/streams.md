@@ -18,14 +18,19 @@ the fewest active TCP connections or UDP sessions. Ties rotate among peers.
 Round robin is the default. Both modes make a single selection per connection
 or UDP session.
 
-- TCP forwards bytes in both directions and propagates half-closes. Rill
-  closes the client connection if it cannot establish the upstream connection
-  within five seconds or the connection fails immediately.
+- TCP forwards bytes in both directions, propagates half-closes, and caps
+  concurrent connections at 4,096 per listener. Rill closes the client
+  connection if it cannot establish the upstream connection within five seconds
+  or the connection fails immediately.
 - UDP forwards whole datagrams. Each source IP and port keeps its selected
-  upstream and upstream socket until the session has been idle for 30 seconds.
-  Either direction counts as activity. Each listener supports 1,024 concurrent
-  sessions and queues up to 16 client datagrams per session. The listener drops
+  upstream and upstream socket until idle for 5 seconds before the first
+  backend reply, or 30 seconds once the backend has answered. Each listener
+  supports up to 1,024 concurrent sessions, 32 concurrent sessions per source
+  IP, and queues up to 16 client datagrams per session. The listener drops
   datagrams that exceed these limits.
+- HTTP policies (`ALLOW_IPS`, `DENY_IPS`, `RATE_LIMIT`), `RILL_ACCESS_LOG`, TLS
+  termination, and SIGHUP reloads apply only to HTTP listeners, not TCP/UDP
+  stream listeners.
 
 ## IMAP, POP3, and SMTP
 

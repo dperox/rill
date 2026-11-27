@@ -8,21 +8,29 @@ use axum::{
     },
 };
 use bytes::Buf;
+use futures_util::FutureExt;
 use http_body_util::{BodyExt, StreamBody};
 use hyper_util::{
-    rt::{TokioExecutor, TokioIo},
-    server::conn::auto::Builder,
+    rt::{TokioExecutor, TokioIo, TokioTimer},
     service::TowerToHyperService,
 };
-use std::{io, path::Path, sync::Arc, time::Duration};
+use std::{collections::HashSet, io, path::Path, sync::Arc, time::Duration};
 use tokio::net::TcpListener;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use tokio_rustls::{TlsAcceptor, rustls};
 use tower::ServiceExt;
 
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_H2_STREAMS: u32 = 256;
+const MAX_H3_HEADER_BYTES: u64 = 64 * 1024;
+
+#[derive(Clone)]
+pub struct NegotiatedSni(pub Option<String>);
+
 pub struct Credentials {
     tcp: TlsAcceptor,
     quic: Arc<quinn::ServerConfig>,
+    pub named_hosts: Arc<HashSet<String>>,
 }
 
 use rustls::{
@@ -46,12 +54,22 @@ impl ResolvesServerCert for Certificates {
 
 fn load_key(certificate: &Path, key: &Path) -> io::Result<CertifiedKey> {
     let certs = CertificateDer::pem_file_iter(certificate)
-        .map_err(io::Error::other)?
+        .map_err(|e| io::Error::other(format!("TLS certificate ({}): {e}", certificate.display())))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(io::Error::other)?;
-    let key = PrivateKeyDer::from_pem_file(key).map_err(io::Error::other)?;
-    CertifiedKey::from_der(certs, key, &rustls::crypto::ring::default_provider())
-        .map_err(io::Error::other)
+        .map_err(|e| {
+            io::Error::other(format!("TLS certificate ({}): {e}", certificate.display()))
+        })?;
+    let parsed_key = PrivateKeyDer::from_pem_file(key)
+        .map_err(|e| io::Error::other(format!("TLS key ({}): {e}", key.display())))?;
+    CertifiedKey::from_der(certs, parsed_key, &rustls::crypto::ring::default_provider()).map_err(
+        |e| {
+            io::Error::other(format!(
+                "TLS certificate/key ({}, {}): {e}",
+                certificate.display(),
+                key.display()
+            ))
+        },
+    )
 }
 
 pub fn credentials(
@@ -62,18 +80,18 @@ pub fn credentials(
 ) -> io::Result<Credentials> {
     let default = Arc::new(load_key(cert, key)?);
     let mut named = ResolvesServerCertUsingSni::new();
-    let mut names = std::collections::HashSet::new();
+    let mut names = HashSet::new();
     for host in hosts {
         let name = host.host.to_ascii_lowercase();
         if !names.insert(name.clone()) {
-            return Err(io::Error::other("duplicate TLS hostname"));
+            return Err(io::Error::other(format!("duplicate TLS hostname: {name}")));
         }
         named
             .add(
                 &name,
                 load_key(&base.join(host.cert), &base.join(host.key))?,
             )
-            .map_err(io::Error::other)?;
+            .map_err(|e| io::Error::other(format!("TLS host {name}: {e}")))?;
     }
     let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
@@ -90,6 +108,7 @@ pub fn credentials(
     Ok(Credentials {
         tcp: TlsAcceptor::from(Arc::new(config)),
         quic,
+        named_hosts: Arc::new(names),
     })
 }
 
@@ -102,9 +121,11 @@ pub fn redirect_from_env(app: Router) -> io::Result<Router> {
     };
     let target = match std::env::var("RILL_HTTPS_REDIRECT") {
         Err(std::env::VarError::NotPresent) => return Ok(app),
-        value => value.map_err(io::Error::other)?,
+        value => value.map_err(|e| io::Error::other(format!("RILL_HTTPS_REDIRECT: {e}")))?,
     };
-    let authority: Authority = target.parse().map_err(io::Error::other)?;
+    let authority: Authority = target
+        .parse()
+        .map_err(|e| io::Error::other(format!("RILL_HTTPS_REDIRECT: {e}")))?;
     if authority.host().is_empty()
         || target.contains(['@', '%', '\\'])
         || (target.len() != authority.host().len() && authority.port_u16().is_none())
@@ -169,12 +190,19 @@ pub async fn serve(address: &str, app: Router, live: crate::reload::Live) -> io:
                 let Ok(connecting) = incoming.accept_with(tls().quic.clone()) else { continue };
                 tokio::spawn(async move {
                     let Ok(conn) = connecting.await else {return};
-                    let app = app.layer(axum::Extension(ConnectInfo(conn.remote_address())));
                     if let Err(error) = serve_h3(conn, app).await { eprintln!("HTTP/3 connection: {error}"); }
                 });
             }
             incoming = tcp.accept() => {
-                let (stream, peer) = incoming?;
+                let (stream, peer) = match incoming {
+                    Ok(accepted) => accepted,
+                    Err(error) if crate::plain::is_transient_accept_error(&error) => continue,
+                    Err(error) => {
+                        eprintln!("TLS accept error: {error}");
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        continue;
+                    }
+                };
                 tokio::spawn(serve_tcp(stream, peer, tls().tcp.clone(), app.clone()));
             }
         }
@@ -194,20 +222,30 @@ async fn serve_tcp(
     else {
         return;
     };
+    let sni = stream
+        .get_ref()
+        .1
+        .server_name()
+        .map(|name| name.to_ascii_lowercase());
     let h2 = stream.get_ref().1.alpn_protocol() == Some(b"h2");
     let app = app
         .layer(axum::Extension(ConnectInfo(peer)))
+        .layer(axum::Extension(NegotiatedSni(sni)))
         .into_service::<hyper::body::Incoming>()
         .map_response(normalize_headers);
     let io = TokioIo::new(stream);
     let service = TowerToHyperService::new(app);
-    let result = if h2 {
-        Builder::new(TokioExecutor::new())
-            .http2_only()
+    let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = if h2 {
+        let mut builder = hyper::server::conn::http2::Builder::new(TokioExecutor::new());
+        builder.max_concurrent_streams(MAX_H2_STREAMS);
+        builder
             .serve_connection(io, service)
             .await
+            .map_err(Into::into)
     } else {
         hyper::server::conn::http1::Builder::new()
+            .timer(TokioTimer::new())
+            .header_read_timeout(HEADER_READ_TIMEOUT)
             .serve_connection(io, service)
             .with_upgrades()
             .await
@@ -219,9 +257,23 @@ async fn serve_tcp(
 }
 
 async fn serve_h3(conn: quinn::Connection, app: Router) -> Result<(), h3::error::ConnectionError> {
-    let mut server = h3::server::Connection::new(h3_quinn::Connection::new(conn)).await?;
+    let sni = conn
+        .handshake_data()
+        .and_then(|data| data.downcast::<quinn::crypto::rustls::HandshakeData>().ok())
+        .and_then(|data| data.server_name)
+        .map(|name| name.to_ascii_lowercase());
+    let mut server = h3::server::builder()
+        .max_field_section_size(MAX_H3_HEADER_BYTES)
+        .build(h3_quinn::Connection::new(conn.clone()))
+        .await?;
     while let Some(resolver) = server.accept().await? {
-        let app = app.clone();
+        // Read remote_address() per request so QUIC connection migration cannot
+        // bypass ALLOW_IPS, DENY_IPS, RATE_LIMIT, or accurate access logging.
+        let peer = conn.remote_address();
+        let app = app
+            .clone()
+            .layer(axum::Extension(ConnectInfo(peer)))
+            .layer(axum::Extension(NegotiatedSni(sni.clone())));
         tokio::spawn(async move {
             let Ok((request, stream)) = resolver.resolve_request().await else {
                 return;
@@ -263,26 +315,49 @@ async fn h3_request(
     app: Router,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (mut send, recv) = stream.split();
-    let recv = RequestBody(recv);
-    let frames = async_stream::try_stream! {
-        let mut recv = recv;
-        while let Some(mut data) = recv.0.recv_data().await? {
-            yield hyper::body::Frame::data(data.copy_to_bytes(data.remaining()));
-        }
-        if let Some(trailers) = recv.0.recv_trailers().await? {
-            yield hyper::body::Frame::trailers(trailers);
+    let mut recv = RequestBody(recv);
+    let request_body = if request
+        .headers()
+        .get(CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        == Some("0")
+    {
+        Body::empty()
+    } else {
+        // Non-blocking poll detects bodyless GET/HEAD requests that already
+        // closed the receive stream (FIN on HEADERS), enabling proxy caching
+        // and failover without stalling uploads.
+        let first = recv.0.recv_data().now_or_never();
+        match first {
+            Some(Ok(None)) => Body::empty(),
+            first => {
+                let frames = async_stream::try_stream! {
+                    let mut recv = recv;
+                    if let Some(mut data) = first.transpose()?.flatten() {
+                        yield hyper::body::Frame::data(data.copy_to_bytes(data.remaining()));
+                    }
+                    while let Some(mut data) = recv.0.recv_data().await? {
+                        yield hyper::body::Frame::data(data.copy_to_bytes(data.remaining()));
+                    }
+                    if let Some(trailers) = recv.0.recv_trailers().await? {
+                        yield hyper::body::Frame::trailers(trailers);
+                    }
+                };
+                fn body<S>(frames: S) -> Body
+                where
+                    S: futures_core::Stream<
+                            Item = Result<hyper::body::Frame<Bytes>, h3::error::StreamError>,
+                        > + Send
+                        + 'static,
+                {
+                    Body::new(StreamBody::new(frames))
+                }
+                body(frames)
+            }
         }
     };
-    fn body<S>(frames: S) -> Body
-    where
-        S: futures_core::Stream<Item = Result<hyper::body::Frame<Bytes>, h3::error::StreamError>>
-            + Send
-            + 'static,
-    {
-        Body::new(StreamBody::new(frames))
-    }
     let is_head = request.method() == Method::HEAD;
-    let response = app.oneshot(request.map(|_| body(frames))).await?;
+    let response = app.oneshot(request.map(|_| request_body)).await?;
     let mut response = normalize_headers(response);
     if !response.headers().contains_key(axum::http::header::DATE) {
         let date = httpdate::fmt_http_date(std::time::SystemTime::now());

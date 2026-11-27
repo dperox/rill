@@ -61,7 +61,7 @@ pub struct Tunnel(std::sync::Arc<std::sync::Mutex<Option<TunnelParts>>>);
 
 impl Tunnel {
     pub fn take(self) -> Option<TunnelParts> {
-        self.0.lock().unwrap().take()
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take()
     }
 }
 
@@ -73,6 +73,12 @@ pub struct Handshake {
 
 impl Handshake {
     pub fn new(downstream: Downstream, headers: &HeaderMap) -> Option<Self> {
+        if single_value(headers, header::SEC_WEBSOCKET_VERSION)
+            .and_then(|value| value.to_str().ok())
+            .is_none_or(|version| version.trim() != "13")
+        {
+            return None;
+        }
         let key = single_value(headers, header::SEC_WEBSOCKET_KEY)?
             .to_str()
             .ok()?;

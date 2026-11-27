@@ -1,6 +1,5 @@
 //! Exact-host document roots used after proxy route selection.
 use crate::static_io::AssetCache;
-use axum::http::uri::Authority;
 use serde::Deserialize;
 use std::{
     io,
@@ -25,7 +24,9 @@ pub struct Site {
 
 impl Site {
     pub fn open(path: &Path, chunk: usize) -> io::Result<Self> {
-        let root = path.canonicalize()?;
+        let root = path
+            .canonicalize()
+            .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))?;
         if !root.is_dir() {
             return Err(io::Error::other(format!(
                 "{} must be a directory",
@@ -43,15 +44,9 @@ impl Site {
 pub fn load(defs: Vec<Definition>, base: &Path, chunk: usize) -> io::Result<Vec<(String, Site)>> {
     let mut sites = Vec::new();
     for def in defs {
-        let host = def.host.parse::<Authority>().map_err(io::Error::other)?;
-        if host.host().is_empty() || host.host() != def.host || def.host.contains(['*', '@']) {
-            return Err(io::Error::other(
-                "site needs an exact hostname without a port",
-            ));
-        }
-        let name = def.host.to_ascii_lowercase();
+        let name = crate::routing::validate_hostname(&def.host, "site")?;
         if sites.iter().any(|(existing, _)| existing == &name) {
-            return Err(io::Error::other("duplicate site host"));
+            return Err(io::Error::other(format!("duplicate site host: {name}")));
         }
         sites.push((name, Site::open(&base.join(def.root), chunk)?));
     }

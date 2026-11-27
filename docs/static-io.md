@@ -2,18 +2,33 @@
 
 Set `DOCUMENT_ROOT` to an existing directory. The source build defaults to
 `public/` relative to the current working directory. The Docker image uses
-`/app/public`. On macOS, static responses use buffered reads. The sendfile path and immutable asset cache below are Linux-specific.
+`/app/public`. Direct file transfer (`RILL_SENDFILE`) defaults to `1` on Linux
+(via `sendfile`) and Windows (via `TransmitFile`), and `0` on macOS (buffered
+reads). The immutable asset cache below is Linux-specific.
+
+Static serving verifies that resolved paths remain inside the configured root
+directory (symlinks escaping the site root and special files such as FIFOs
+return 404). Dotfiles (such as `.env` or `.git`) inside the root are not
+filtered, so point `DOCUMENT_ROOT` and `sites[].root` at isolated static
+artifacts rather than a source repository or secrets directory.
 
 ## Linux sendfile
 
-`RILL_SENDFILE` accepts `0` or `1` and defaults to `1` on Linux and Windows.
+`RILL_SENDFILE` accepts `0` or `1` and defaults to `1` on Linux and Windows (`0` on macOS).
 Ordinary plaintext HTTP/1 GETs larger than 64 KiB use the open file descriptor
 to transfer directly to the socket when compression is disabled. HEAD and
 matching validators skip reads of the body. Small files through 64 KiB use
 batched buffered reads and can share the response within a request group.
 
-The same plaintext port accepts static, proxy, and WebSocket requests. An optional
-`RILL_STATIC_LISTEN` address adds a static-only listener.
+The same plaintext port accepts static, proxy, and WebSocket requests.
+
+## Static-only listener
+
+Set `RILL_STATIC_LISTEN` (cross-platform) to add a dedicated plaintext listener
+that serves static files only. Requests matching a configured proxy prefix
+return HTTP 404 rather than falling back to files. It uses the plaintext
+`http-kit-h1` / prior-knowledge HTTP/2 driver and applies HTTP access rules,
+rate limits, and `RILL_HTTPS_REDIRECT`.
 
 Use `RILL_SENDFILE=0` when cold or remote storage could stall a network
 worker that also serves latency-sensitive requests. A sendfile call can wait

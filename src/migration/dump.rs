@@ -149,13 +149,15 @@ impl Dump {
 
     // Match exact paths or one '*' in the filename, using only sections present in the dump.
     pub fn included(&self, pattern: &str) -> Vec<&String> {
-        let pattern = Path::new(&self.root)
-            .parent()
-            .unwrap_or(Path::new(""))
-            .join(pattern);
+        let pattern = normalize_lexical(
+            &Path::new(&self.root)
+                .parent()
+                .unwrap_or(Path::new(""))
+                .join(pattern),
+        );
         let mut found = BTreeSet::new();
         for file in self.files.keys() {
-            let path = Path::new(file);
+            let path = normalize_lexical(Path::new(file));
             if path == pattern {
                 found.insert(file);
                 continue;
@@ -177,4 +179,26 @@ impl Dump {
         }
         found.into_iter().collect()
     }
+}
+
+fn normalize_lexical(path: &Path) -> std::path::PathBuf {
+    use std::path::{Component, PathBuf};
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !matches!(
+                    out.components().next_back(),
+                    None | Some(Component::RootDir | Component::Prefix(_) | Component::ParentDir)
+                ) {
+                    out.pop();
+                } else if !path.is_absolute() {
+                    out.push(comp);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }

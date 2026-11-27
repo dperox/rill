@@ -1,9 +1,9 @@
 //! Run each plaintext worker's socket readiness and local tasks on the same thread.
-use super::{Transport, spawn_socket};
+use super::{Transport, is_transient_accept_error, spawn_socket};
 use axum::Router;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use http_kit_io::{FromStd, Listener, tokio::Tokio};
-use std::{io, net::TcpListener};
+use std::{io, net::TcpListener, time::Duration};
 use tokio::{
     runtime::{Builder, LocalRuntime},
     sync::oneshot,
@@ -17,16 +17,18 @@ pub struct WorkerReactors {
 
 impl WorkerReactors {
     pub fn new(workers: usize, blocking_threads: usize) -> Self {
+        let workers = workers.max(1);
         Self {
             workers,
-            blocking_threads,
+            blocking_threads: blocking_threads.max(workers),
         }
     }
 
     pub fn runtime(self, index: usize) -> io::Result<LocalRuntime> {
         // Split the process-wide filesystem/DNS budget, including the remainder.
-        let limit = self.blocking_threads / self.workers
-            + usize::from(index < self.blocking_threads % self.workers);
+        let limit = (self.blocking_threads / self.workers
+            + usize::from(index < self.blocking_threads % self.workers))
+        .max(1);
         Builder::new_current_thread()
             .enable_all()
             .max_blocking_threads(limit)
@@ -75,7 +77,15 @@ impl WorkerReactors {
 async fn accept(listener: TcpListener, app: Router, transport: Transport) -> io::Result<()> {
     let listener = Tokio.tcp_listener(listener)?;
     loop {
-        let (stream, peer) = listener.accept().await?;
+        let (stream, peer) = match listener.accept().await {
+            Ok(accepted) => accepted,
+            Err(error) if is_transient_accept_error(&error) => continue,
+            Err(error) => {
+                eprintln!("Plaintext worker accept error: {error}");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+        };
         spawn_socket(stream, peer, app.clone(), transport);
     }
 }
