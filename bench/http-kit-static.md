@@ -1,5 +1,20 @@
 # Rill vs. NGINX
 
+## Throughput by core count
+
+Median requests per second with 64 clients. The last column divides the four-core result by the one-core result for the same server and workload.
+
+| Workload | Server | 1 core | 2 cores | 4 cores | 4 cores / 1 core |
+|---|---|---:|---:|---:|---:|
+| Static 4 KiB | Rill | 31,637 | 66,054 | 160,518 | 5.07× |
+| Static 4 KiB | NGINX | 28,890 | 68,321 | 201,334 | 6.97× |
+| Static 256 KiB | Rill | 17,709 | 48,238 | 56,604 | 3.20× |
+| Static 256 KiB | NGINX | 17,738 | 58,068 | 53,144 | 3.00× |
+| Proxy 4 KiB | Rill | 24,240 | 39,377 | 78,741 | 3.25× |
+| Proxy 4 KiB | NGINX | 23,119 | 58,921 | 60,436 | 2.61× |
+| Proxy 256 KiB | Rill | 9,740 | 12,940 | 24,940 | 2.56× |
+| Proxy 256 KiB | NGINX | 2,603 | 5,675 | 13,320 | 5.12× |
+
 ## One frontend core
 
 Rill served about 10% more requests per second for a 4 KiB static file. For a
