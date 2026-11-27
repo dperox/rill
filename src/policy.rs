@@ -156,6 +156,14 @@ fn networks(name: &str) -> io::Result<Vec<IpNet>> {
         .collect()
 }
 
+pub fn compression_from_env() -> io::Result<bool> {
+    match variable("COMPRESS")?.as_deref() {
+        None | Some("0") => Ok(false),
+        Some("1") => Ok(true),
+        _ => Err(invalid("COMPRESS", "must be 0 or 1")),
+    }
+}
+
 impl Policies {
     pub fn from_env() -> io::Result<Self> {
         let ttl = number("CACHE_TTL")?;
@@ -170,11 +178,7 @@ impl Policies {
                 ));
             }
         };
-        let compress = match variable("COMPRESS")?.as_deref() {
-            None | Some("0") => false,
-            Some("1") => true,
-            _ => return Err(invalid("COMPRESS", "must be 0 or 1")),
-        };
+        let compress = compression_from_env()?;
         Ok(Self {
             access: Arc::new(Access {
                 allow: networks("ALLOW_IPS")?,

@@ -247,6 +247,29 @@ fn runtime(check: bool) -> io::Result<()> {
         Err(env::VarError::NotPresent) => 1,
         Err(error) => return Err(io::Error::other(error)),
     };
+    let enable_sendfile = match env::var("RILL_SENDFILE").as_deref() {
+        Ok("0") => false,
+        Ok("1") => true,
+        Err(env::VarError::NotPresent) => cfg!(any(windows, target_os = "linux")),
+        _ => return Err(io::Error::other("RILL_SENDFILE must be 0 or 1")),
+    };
+    let streams = streams::configured()?;
+    // Each independent reactor needs at least one blocking worker. Other
+    // listeners also use Tokio's shared executor, so keep their existing pool.
+    if cfg!(target_os = "linux")
+        && workers > 1
+        && blocking_threads >= workers
+        && enable_sendfile
+        && streams.is_empty()
+        && env::var_os("TLS_LISTEN").is_none()
+        && env::var_os("RILL_STATIC_LISTEN").is_none()
+        && !policy::compression_from_env()?
+    {
+        let reactors = plain::WorkerReactors::new(workers, blocking_threads);
+        return reactors
+            .runtime(0)?
+            .block_on(run(check, Some(reactors), enable_sendfile, streams));
+    }
     let mut runtime = if workers == 1 {
         tokio::runtime::Builder::new_current_thread()
     } else {
@@ -258,7 +281,12 @@ fn runtime(check: bool) -> io::Result<()> {
         .enable_all()
         .max_blocking_threads(blocking_threads)
         .build()?
-        .block_on(tokio::task::LocalSet::new().run_until(run(check)))
+        .block_on(tokio::task::LocalSet::new().run_until(run(
+            check,
+            None,
+            enable_sendfile,
+            streams,
+        )))
 }
 
 enum Target {
@@ -266,7 +294,12 @@ enum Target {
     Static(sites::Site),
 }
 
-async fn run(check: bool) -> io::Result<()> {
+async fn run(
+    check: bool,
+    reactors: Option<plain::WorkerReactors>,
+    enable_sendfile: bool,
+    streams: Vec<streams::ListenerConfig>,
+) -> io::Result<()> {
     let stream_chunk = static_io::stream_chunk_bytes()?;
     let root = PathBuf::from(env::var_os("DOCUMENT_ROOT").unwrap_or_else(|| "public".into()));
     let default_site = sites::Site::open(&root, stream_chunk)?;
@@ -330,14 +363,7 @@ async fn run(check: bool) -> io::Result<()> {
             env::var("PORT").unwrap_or_else(|_| "8080".into())
         )
     });
-    let enable_sendfile = match env::var("RILL_SENDFILE").as_deref() {
-        Ok("0") => false,
-        Ok("1") => true,
-        Err(env::VarError::NotPresent) => cfg!(any(windows, target_os = "linux")),
-        _ => return Err(io::Error::other("RILL_SENDFILE must be 0 or 1")),
-    };
     let static_addr = env::var("RILL_STATIC_LISTEN").ok();
-    let streams = streams::configured()?;
     if check {
         for addr in std::iter::once(&address)
             .chain(tls_address.as_ref())
@@ -372,14 +398,14 @@ async fn run(check: bool) -> io::Result<()> {
         ));
     }
     if enable_sendfile && !compression {
-        jobs.spawn_local(plain::serve(
-            listener,
-            app,
-            plain::Transport {
-                regions: true,
-                static_only: false,
-            },
-        ));
+        let transport = plain::Transport {
+            regions: true,
+            static_only: false,
+        };
+        if let Some(reactors) = reactors {
+            return reactors.serve(listener, app, transport).await;
+        }
+        jobs.spawn_local(plain::serve(listener, app, transport));
     } else {
         jobs.spawn(async move {
             let listener = listener.tap_io(|stream| {

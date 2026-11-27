@@ -12,8 +12,10 @@ use std::{io, net::SocketAddr, time::Duration};
 mod file_writer;
 mod prefetched;
 mod short;
+mod workers;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tower::ServiceExt;
+pub use workers::WorkerReactors;
 
 #[derive(Clone, Copy)]
 pub struct Transport {
