@@ -251,7 +251,7 @@ def main():
                 listener.bind(("127.0.0.1", 0))
             backend_port, port, other_port = [s.getsockname()[1] for s in sockets]
 
-        upstream = f"127.0.0.1:{backend_port}"
+        upstream = None if args.workload == "static" else f"127.0.0.1:{backend_port}"
         if args.workload in (None, "proxy"):
             backend = start_rill(args.rill, [args.backend_cpu], backend_port)
             check(backend_port, ROUTES["proxy"], backend, body)

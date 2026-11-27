@@ -264,6 +264,10 @@ fn runtime(check: bool) -> io::Result<()> {
         && env::var_os("TLS_LISTEN").is_none()
         && env::var_os("RILL_STATIC_LISTEN").is_none()
         && !policy::compression_from_env()?
+        // With larger proxy pools the shared scheduler won the forwarding
+        // benchmark. A config file can add routes on reload.
+        && (workers == 2
+            || (env::var_os("RILL_CONFIG").is_none() && routing::from_env()?.is_empty()))
     {
         let reactors = plain::WorkerReactors::new(workers, blocking_threads);
         return reactors
