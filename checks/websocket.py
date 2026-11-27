@@ -12,6 +12,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Thread
 
+from upstreams import certificates
 from reload import LOOPBACK, RILL, free_port, listening, make_certificate, publish, reload, stop, wait_until
 
 KEY = "dGhlIHNhbXBsZSBub25jZQ=="
@@ -81,7 +82,7 @@ class Origin(BaseHTTPRequestHandler):
             if opcode == 8:
                 self.wfile.write(frame(payload, opcode=8))
                 return
-            assert opcode == 1, opcode_and_flags
+            assert opcode == 1, opcode
             self.wfile.write(frame(self.server.label + b":" + payload))
 
     def reply(self, status, body):
@@ -143,7 +144,7 @@ def active_config(*origins):
     return {
         "routes": [{
             "prefix": "/api/",
-            "upstreams": [f"{LOOPBACK}:{server.server_port}" for server in origins],
+            "upstreams": [server.upstream_url for server in origins],
         }],
         "tls": {"cert": "edge.pem", "key": "edge.key"},
     }
@@ -158,6 +159,7 @@ def exercise(work, old, new, compress):
         publish(config, active_config(old, new))
         env = dict(os.environ, LISTEN=f"{LOOPBACK}:{http_port}",
                    TLS_LISTEN=f"{LOOPBACK}:{tls_port}", RILL_CONFIG=str(config),
+                   RILL_UPSTREAM_CA=str(work / "ca.pem"),
                    DOCUMENT_ROOT=str(work), CACHE_TTL="30", CACHE_COALESCE="1",
                    RILL_HTTP_BALANCE="least_connections", RILL_SENDFILE="1",
                    COMPRESS=compress)
@@ -219,10 +221,17 @@ def main():
     with TemporaryDirectory() as directory, ExitStack() as stack:
         work = Path(directory)
         make_certificate(work, "edge")
+        certificates(work)
+        upstream_tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        upstream_tls.load_cert_chain(work / "server.pem", work / "server.key")
         origins = []
-        for label in (b"old", b"new"):
+        for label, secure in ((b"old", False), (b"new", True)):
             origin = stack.enter_context(ThreadingHTTPServer((LOOPBACK, 0), Origin))
             origin.label = label
+            origin.upstream_url = f"http://{LOOPBACK}:{origin.server_port}"
+            if secure:
+                origin.socket = upstream_tls.wrap_socket(origin.socket, server_side=True)
+                origin.upstream_url = f"https://localhost:{origin.server_port}"
             Thread(target=origin.serve_forever, daemon=True).start()
             stack.callback(origin.shutdown)
             origins.append(origin)
