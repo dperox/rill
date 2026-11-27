@@ -1,5 +1,25 @@
 # Deploy Rill
 
+## Native Windows
+
+The x86-64 Windows GNU release at `7082e92` was cross-compiled on Linux and exercised on Windows 11 Pro. Build it from Linux with the GNU MinGW-w64 x86-64 C compiler and linker installed:
+
+```sh
+rustup target add x86_64-pc-windows-gnu
+cargo build --release --locked --target x86_64-pc-windows-gnu
+```
+
+Copy `target/x86_64-pc-windows-gnu/release/rill.exe` and the sample `public` directory to the Windows host. From their parent directory in PowerShell:
+
+```powershell
+$env:DOCUMENT_ROOT = (Resolve-Path .\public).Path
+$env:LISTEN = '127.0.0.1:8080'
+.\rill.exe config test
+if ($LASTEXITCODE -eq 0) { .\rill.exe }
+```
+
+In a second shell, run `curl.exe -i http://127.0.0.1:8080/` and verify the expected page. Native checks covered static GET and HEAD, HTTPS, HTTP proxying and policies, TCP and UDP forwarding, and configuration preflight. On Windows, restart Rill to apply a new configuration.
+
 ## Docker
 
 Build from the repository root and publish the container’s default HTTP port.

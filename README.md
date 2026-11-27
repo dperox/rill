@@ -21,6 +21,8 @@ cargo build --release --locked
 
 In another terminal, run `curl -i http://127.0.0.1:8080/`. The sample page says **Rill is running**. To serve your own site, set `DOCUMENT_ROOT` to an existing directory. `LISTEN` sets the bind address. When it is unset, Rill binds to loopback and uses `PORT`, which defaults to 8080.
 
+On Windows hosts, Rill also runs as a native executable. See the [Windows deployment and verification steps](docs/deployment.md#native-windows).
+
 ## Run with Docker or Kubernetes
 
 Build the Linux image from the repository root and publish it on localhost. The image includes the sample site and runs as UID 10001.
