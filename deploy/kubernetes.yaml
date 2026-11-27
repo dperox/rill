@@ -21,7 +21,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: rill
-          image: ghcr.io/dperox/rill:0.1.0
+          image: ghcr.io/dperox/rill:0.1.1
           imagePullPolicy: IfNotPresent
           env:
             - name: LISTEN

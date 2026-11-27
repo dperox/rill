@@ -13,7 +13,7 @@ Rill’s goal is to keep sites fast as they grow, while using less memory and ke
 Run the sample site with Docker:
 
 ```sh
-docker run --rm -p 127.0.0.1:8080:8080 ghcr.io/dperox/rill:0.1.0
+docker run --rm -p 127.0.0.1:8080:8080 ghcr.io/dperox/rill:0.1.1
 ```
 
 Open <http://127.0.0.1:8080/> to see **Rill is running**. You can also download a Linux or Windows executable. [Downloads](https://github.com/dperox/rill/releases/latest) · [Deployment guide](docs/deployment.md)

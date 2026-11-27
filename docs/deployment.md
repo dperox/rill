@@ -114,7 +114,7 @@ For an existing kind cluster, build `rill:local` as above, then run:
 
 ```sh
 kind load docker-image rill:local
-sed 's|image: ghcr.io/dperox/rill:0.1.0|image: rill:local|' deploy/kubernetes.yaml | kubectl apply -f -
+sed 's|image: ghcr.io/dperox/rill:0.1.1|image: rill:local|' deploy/kubernetes.yaml | kubectl apply -f -
 kubectl rollout status deployment/rill
 kubectl port-forward service/rill 8080:8080
 ```
@@ -132,7 +132,7 @@ from.
 ```sh
 docker tag rill:local registry.example.com/team/rill:v1
 docker push registry.example.com/team/rill:v1
-sed 's|image: ghcr.io/dperox/rill:0.1.0|image: registry.example.com/team/rill:v1|' \
+sed 's|image: ghcr.io/dperox/rill:0.1.1|image: registry.example.com/team/rill:v1|' \
   deploy/kubernetes.yaml | kubectl apply -f -
 kubectl rollout status deployment/rill
 ```
