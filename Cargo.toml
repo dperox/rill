@@ -9,8 +9,10 @@ repository = "https://github.com/dperox/rill"
 
 [dependencies]
 axum = { version = "0.8", default-features = false, features = ["form", "http1", "json", "matched-path", "query", "tokio", "tower-log", "tracing"] }
+base64 = "0.22"
+ring = "0.17"
 httpdate = "1.0"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time", "sync", "fs"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time", "sync", "fs", "signal"] }
 tower-http = { version = "0.6", features = ["fs", "compression-gzip"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio", "server-auto", "service", "http2"] }
 tower = { version = "0.5", features = ["util"] }

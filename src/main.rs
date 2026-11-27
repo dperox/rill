@@ -2,12 +2,14 @@ mod edge;
 #[cfg(target_os = "linux")]
 mod plain;
 mod policy;
+mod reload;
 mod routing;
 #[cfg(target_os = "linux")]
 mod sendfile;
 mod static_io;
 mod streams;
 mod upstream;
+mod websocket;
 use axum::serve::ListenerExt;
 use axum::{
     Router,
@@ -305,14 +307,33 @@ impl Drop for Lease {
 }
 
 async fn proxy(pool: Arc<Pool>, mut req: Request) -> Response {
-    let cache_key = match pool.policy.cache_lookup(&req) {
-        policy::Lookup::Hit(response) => return response,
-        policy::Lookup::Miss(key) => key,
-        policy::Lookup::Wait(waiter) => {
-            if let Some(response) = waiter.cached_response().await {
-                return response;
+    let downstream = if websocket::requests_upgrade(req.headers()) {
+        if req.method() != axum::http::Method::GET
+            || req.version() != axum::http::Version::HTTP_11
+            || !websocket::connection_upgrade(req.headers())
+            || !axum::body::HttpBody::is_end_stream(req.body())
+        {
+            return error_page(StatusCode::BAD_REQUEST);
+        }
+        let Some(upgrade) = req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>() else {
+            return error_page(StatusCode::BAD_REQUEST);
+        };
+        Some(upgrade)
+    } else {
+        None
+    };
+    let cache_key = if downstream.is_some() {
+        None
+    } else {
+        match pool.policy.cache_lookup(&req) {
+            policy::Lookup::Hit(response) => return response,
+            policy::Lookup::Miss(key) => key,
+            policy::Lookup::Wait(waiter) => {
+                if let Some(response) = waiter.cached_response().await {
+                    return response;
+                }
+                None
             }
-            None
         }
     };
     let Some((index, lease)) = pool.select() else {
@@ -328,9 +349,21 @@ async fn proxy(pool: Arc<Pool>, mut req: Request) -> Response {
     };
     *req.uri_mut() = uri;
     strip_hop_headers(req.headers_mut());
+    let handshake = if let Some(downstream) = downstream {
+        let Some(handshake) = websocket::Handshake::new(downstream, req.headers()) else {
+            return error_page(StatusCode::BAD_REQUEST);
+        };
+        websocket::set_upgrade_headers(req.headers_mut());
+        Some(handshake)
+    } else {
+        None
+    };
     req.headers_mut().insert(header::HOST, peer.host_header());
     let result = tokio::time::timeout(Duration::from_secs(60), pool.client.request(req)).await;
     match result {
+        Ok(Ok(response)) if response.status() == StatusCode::SWITCHING_PROTOCOLS => {
+            websocket::switch_protocols(response, handshake, lease)
+        }
         Ok(Ok(mut response)) => {
             strip_hop_headers(response.headers_mut());
             let response = if let Some(lease) = lease {
@@ -395,10 +428,10 @@ async fn run() -> io::Result<()> {
     let asset_cache = static_io::AssetCache::from_env()?;
     let files = ServeDir::new(&root).with_buf_chunk_size(stream_chunk);
     let root = Arc::new(root);
-    let policies = policy::Policies::from_env()?;
-    let routes = Arc::new(routing::load(&policies)?);
+    let (live, tls_address) = reload::start()?;
+    let routes = live.clone();
     let app = Router::new().fallback_service(tower::service_fn(move |req: Request| {
-        let pool = routing::pick(&routes, &req);
+        let pool = routing::pick(&routes.borrow().routes, &req);
         let files = files.clone();
         let root = root.clone();
         let cache = asset_cache.clone();
@@ -413,7 +446,10 @@ async fn run() -> io::Result<()> {
             Ok::<_, std::convert::Infallible>(response)
         }
     }));
-    let app = policies.apply(app);
+    let app = live.borrow().policies.apply(app, live.clone());
+    let requires_client_addr = live.borrow().policies.requires_client_addr();
+    #[cfg(target_os = "linux")]
+    let compression = live.borrow().policies.compression_enabled();
     let address = env::var("LISTEN").unwrap_or_else(|_| {
         format!(
             "127.0.0.1:{}",
@@ -427,31 +463,9 @@ async fn run() -> io::Result<()> {
         let task = service.spawn();
         jobs.spawn(async move { task.await.map_err(io::Error::other)? });
     }
-    match (
-        env::var_os("TLS_LISTEN"),
-        env::var_os("TLS_CERT"),
-        env::var_os("TLS_KEY"),
-    ) {
-        (Some(address), Some(cert), Some(key)) => {
-            let secure = app.clone();
-            jobs.spawn(async move {
-                edge::serve(
-                    address
-                        .to_str()
-                        .ok_or_else(|| io::Error::other("invalid TLS_LISTEN"))?,
-                    secure,
-                    std::path::Path::new(&cert),
-                    std::path::Path::new(&key),
-                )
-                .await
-            });
-        }
-        (None, None, None) => {}
-        _ => {
-            return Err(io::Error::other(
-                "set TLS_LISTEN, TLS_CERT and TLS_KEY together",
-            ));
-        }
+    if let Some(address) = tls_address {
+        let secure = app.clone();
+        jobs.spawn(async move { edge::serve(&address, secure, live).await });
     }
     let enable_sendfile = match env::var("RILL_SENDFILE").as_deref() {
         Ok("0") => false,
@@ -460,8 +474,8 @@ async fn run() -> io::Result<()> {
     };
     jobs.spawn(async move {
         #[cfg(target_os = "linux")]
-        if enable_sendfile && !policies.compression_enabled() {
-            return plain::serve(listener, app, policies.requires_client_addr()).await;
+        if enable_sendfile && !compression {
+            return plain::serve(listener, app, requires_client_addr).await;
         }
         #[cfg(not(target_os = "linux"))]
         let _ = enable_sendfile;
@@ -470,7 +484,7 @@ async fn run() -> io::Result<()> {
                 eprintln!("could not set TCP_NODELAY on client socket: {error}");
             }
         });
-        if policies.requires_client_addr() {
+        if requires_client_addr {
             axum::serve(
                 listener,
                 app.into_make_service_with_connect_info::<std::net::SocketAddr>(),

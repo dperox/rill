@@ -3,7 +3,7 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Definition {
+pub struct Definition {
     #[serde(default)]
     host: Option<String>,
     prefix: String,
@@ -14,9 +14,18 @@ pub struct Route {
     host: Option<String>,
     prefix: String,
     pool: Arc<Pool>,
+    probes: Vec<tokio::task::AbortHandle>,
 }
 
-pub fn load(policy: &policy::Policies) -> io::Result<Vec<Route>> {
+impl Drop for Route {
+    fn drop(&mut self) {
+        for task in &self.probes {
+            task.abort();
+        }
+    }
+}
+
+pub fn from_env() -> io::Result<Vec<Definition>> {
     let mut definitions: Vec<Definition> = match env::var("RILL_ROUTES") {
         Ok(json) => serde_json::from_str(&json).map_err(io::Error::other)?,
         Err(env::VarError::NotPresent) => vec![],
@@ -29,6 +38,10 @@ pub fn load(policy: &policy::Policies) -> io::Result<Vec<Route>> {
             upstreams: list.split(',').map(|s| s.trim().to_owned()).collect(),
         });
     }
+    Ok(definitions)
+}
+
+pub fn load(definitions: Vec<Definition>, policy: &policy::Policies) -> io::Result<Vec<Route>> {
     let least = match env::var("RILL_HTTP_BALANCE").as_deref() {
         Ok("round_robin") | Err(env::VarError::NotPresent) => false,
         Ok("least_connections") => true,
@@ -71,6 +84,7 @@ pub fn load(policy: &policy::Policies) -> io::Result<Vec<Route>> {
         let active = least.then(|| std::sync::Mutex::new(vec![0; servers.len()]));
         routes.push(Route {
             host,
+            probes: Vec::new(),
             prefix: d.prefix,
             pool: Arc::new(Pool {
                 servers,
@@ -83,8 +97,8 @@ pub fn load(policy: &policy::Policies) -> io::Result<Vec<Route>> {
         });
     }
     if let Some(health) = health {
-        for route in &routes {
-            health.start(&route.pool);
+        for route in &mut routes {
+            route.probes = health.start(&route.pool);
         }
     }
     routes.sort_by_key(|r| {

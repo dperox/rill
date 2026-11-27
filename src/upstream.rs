@@ -144,10 +144,11 @@ impl Health {
             path,
         }))
     }
-    pub fn start(&self, pool: &Arc<Pool>) {
+    pub fn start(&self, pool: &Arc<Pool>) -> Vec<tokio::task::AbortHandle> {
+        let mut tasks = Vec::new();
         for i in 0..pool.servers.len() {
             let (pool, interval, path) = (pool.clone(), self.interval, self.path.clone());
-            tokio::spawn(async move {
+            let task = tokio::spawn(async move {
                 let peer = &pool.servers[i];
                 loop {
                     let probe = async {
@@ -190,7 +191,9 @@ impl Health {
                     tokio::time::sleep(interval).await;
                 }
             });
+            tasks.push(task.abort_handle());
         }
+        tasks
     }
 }
 

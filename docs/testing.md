@@ -54,3 +54,9 @@ python3 checks/streams.py "$RILL"
 ```
 
 These checks start loopback listeners and temporary fixtures. The sendfile and asset-cache checks cover overlapping downloads, conditional and range responses, file replacement, disconnects and cache limits on Linux. The stream check exercises TCP, UDP and mail backends. See the [TLS guide](edge.md) for the separate HTTPS and QUIC check and the [benchmark guide](../bench/README.md) for throughput and idle-memory comparisons.
+
+## Feature acceptance
+
+Run `./checks/features.sh` from Linux or WSL. It builds a locked debug binary, then runs the reload and WebSocket acceptance checks against that binary. Set `RILL` to an absolute binary path to test an existing build instead.
+
+Both checks use loopback connections and temporary fixtures. With the optional HTTP/3 dependencies from the [TLS guide](edge.md#local-protocol-check), run `python3 checks/reload.py --http3` to check QUIC routing and certificate rotation too. The [feature guide](features.md) describes the client and operator behaviors they verify.

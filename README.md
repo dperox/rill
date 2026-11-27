@@ -1,6 +1,6 @@
 # Rill
 
-Rill is a Rust web server, reverse proxy and load balancer. A single executable serves static files, routes HTTP requests to application servers, terminates TLS for HTTP/1.1, HTTP/2 and HTTP/3, and forwards TCP connections and UDP datagrams. Configure it with environment variables at startup. Its HTTP regression suite checks response status, headers and body bytes using Rust Anything.
+Rill is a Rust web server, reverse proxy and load balancer. A single executable serves static files, routes HTTP requests to application servers, terminates TLS for HTTP/1.1, HTTP/2 and HTTP/3, and forwards TCP connections and UDP datagrams. Use environment variables for startup settings and an optional file for live HTTP route and certificate updates. Its HTTP regression suite checks response status, headers and body bytes using Rust Anything.
 
 ## Run from source
 
@@ -42,7 +42,7 @@ With an HTTP application listening on port 9001, start Rill with the following s
 UPSTREAMS=127.0.0.1:9001 ./target/release/rill
 ```
 
-A request for `/api/products?limit=5` reaches the backend with that path and query and `Host: backend`. Other paths still serve the document root. Add comma-separated upstreams for round-robin balancing, or use `RILL_ROUTES` for host and path-prefix rules. HTTPS and mutual TLS upstreams and active health checks are optional. [Routing examples](docs/routing.md)
+A request for `/api/products?limit=5` reaches the backend with that path and query and `Host: backend`. Other paths still serve the document root. Add comma-separated upstreams for round-robin balancing, or use `RILL_ROUTES` for host and path-prefix rules. HTTP/1.1 WebSocket upgrades use the same routes. HTTPS and mutual TLS upstreams and active health checks are optional. [Routing examples](docs/routing.md)
 
 ## Configuration
 
@@ -50,7 +50,8 @@ A request for `/api/products?limit=5` reaches the backend with that path and que
 | --- | --- |
 | Serve files and cache versioned assets | `DOCUMENT_ROOT`, `RILL_SENDFILE`, `RILL_STATIC_CHUNK_KIB`, `RILL_ASSET_CACHE_ENTRIES`. [Static file settings](docs/static-io.md) |
 | Route HTTP and balance backends | `UPSTREAMS`, `RILL_ROUTES`, `RILL_HTTP_BALANCE`. [HTTP routing](docs/routing.md) |
-| Enable HTTPS and QUIC | Set `TLS_LISTEN`, `TLS_CERT` and `TLS_KEY` together. HTTP/3 uses UDP on the same port as HTTPS over TCP. [TLS and protocol checks](docs/edge.md) |
+| Reload HTTP routes and certificates on Unix | Set `RILL_CONFIG` to a JSON file and send `SIGHUP`. [Graceful reloads](docs/reload.md) |
+| Enable HTTPS and QUIC | Set `TLS_LISTEN` and supply the server certificate and key. HTTP/3 uses UDP on the same port as HTTPS over TCP. [TLS and protocol checks](docs/edge.md) |
 | Cache proxy responses, compress or limit requests | `CACHE_TTL`, `COMPRESS`, `RATE_LIMIT`, `ALLOW_IPS`, `DENY_IPS`. [HTTP policies](docs/policy.md) |
 | Forward TCP, UDP or mail to backends | `RILL_TCP_LISTENERS`, `RILL_UDP_LISTENERS`, `RILL_STREAM_BALANCE`. [Transport configuration](docs/streams.md) |
 
@@ -61,6 +62,10 @@ Rill defaults to **one blocking worker** for filesystem operations and DNS. Set 
 `cargo test --locked` runs the Rust unit tests. The [testing guide](docs/testing.md) covers the HTTP and transport integration suites, including how to replay the 56 recorded HTTP cases. The [implementation notes](docs/crates.md) describe the Rust dependencies and the patches in Rill’s Hyper fork.
 
 With one frontend CPU and 64 HTTP/1.1 clients on WSL2, Rill’s immutable asset cache increased throughput for a warm 256 KiB file from 17,481 to 21,016 requests/s. See the [measurements](bench/sendfile.md) and [benchmark commands](bench/README.md) for the workload and settings.
+
+## Contributing
+
+The [feature guide](docs/features.md) connects operator-visible behavior to acceptance tests. [AGENTS.md](AGENTS.md) lists repository skills and development commands.
 
 ## License
 

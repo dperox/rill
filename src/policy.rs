@@ -210,7 +210,7 @@ impl Policies {
             || self.access.limiter.is_some()
     }
 
-    pub fn apply(&self, mut app: Router) -> Router {
+    pub fn apply(&self, mut app: Router, live: crate::reload::Live) -> Router {
         if self.compress {
             app = app
                 .layer(middleware::from_fn(mark_for_compression))
@@ -226,11 +226,8 @@ impl Policies {
                 check_access,
             ));
         }
-        if let Some(cache) = &self.cache {
-            app = app.layer(middleware::from_fn_with_state(
-                cache.clone(),
-                invalidate_on_write,
-            ));
+        if self.cache.is_some() {
+            app = app.layer(middleware::from_fn_with_state(live, invalidate_on_write));
         }
         app
     }
@@ -492,7 +489,7 @@ fn cache_freshness(response: &Response, cap: u64) -> Option<(Duration, u64)> {
 }
 
 async fn invalidate_on_write(
-    State(cache): State<Arc<Cache>>,
+    State(live): State<crate::reload::Live>,
     request: Request,
     next: Next,
 ) -> Response {
@@ -503,6 +500,11 @@ async fn invalidate_on_write(
     if let Some(target) = target
         && (response.status().is_success() || response.status().is_redirection())
     {
+        // Even an earlier generation's write can change data served by the current routes.
+        let generation = live.borrow();
+        let Some(cache) = &generation.policies.cache else {
+            return response;
+        };
         let mut state = cache.state.lock().unwrap();
         state.entries.retain(|key, _| key.target != target);
         state.generation = state.generation.wrapping_add(1);

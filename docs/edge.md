@@ -1,6 +1,6 @@
 # HTTPS, HTTP/2 and HTTP/3
 
-Set `TLS_LISTEN`, `TLS_CERT` and `TLS_KEY` together to enable the HTTPS endpoint. Rill reads a PEM certificate chain (leaf first) and matching PEM private key at startup. Restart Rill after replacing the files. The cleartext listener continues to use `LISTEN`.
+Set `TLS_LISTEN` to enable HTTPS. Supply the certificate and key through `TLS_CERT` and `TLS_KEY`, or in the `tls` section of `RILL_CONFIG`. Rill reads a PEM certificate chain (leaf first) and matching PEM private key at startup. On Unix, send SIGHUP after replacing the files to rotate the certificate for new handshakes. See [graceful reloads](reload.md). The cleartext listener continues to use `LISTEN`.
 
 Rill uses the same port for TCP and UDP. TCP negotiates HTTP/2 or HTTP/1.1 through ALPN. QUIC negotiates HTTP/3 over UDP. HTTPS responses advertise the UDP port through `Alt-Svc`. Make that port reachable over both transports. The listener uses one certificate chain for all hostnames and accepts clients without a client certificate. TCP TLS handshakes have a ten-second deadline. HTTP/3 sends each request through the same router as the TCP transports, including access rules and upstream selection. Encrypted static responses use buffered file delivery. [Static file settings](static-io.md)
 

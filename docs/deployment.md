@@ -243,5 +243,4 @@ SERVICE
 Use the TLS Service from inside the cluster. For external HTTP/3 clients,
 use a load balancer or gateway that forwards both transports. Preserve
 the advertised QUIC port. `kubectl port-forward` can test HTTPS over TCP.
-HTTP/3 needs a route to the UDP port. Restart Rill after replacing its
-certificate.
+HTTP/3 needs a route to the UDP port. After the mounted Secret updates, send SIGHUP to each Rill process to rotate its certificate. A Deployment rollout also picks up the new files. [Graceful reloads](reload.md)

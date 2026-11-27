@@ -20,7 +20,12 @@ use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObj
 use tokio_rustls::{TlsAcceptor, rustls};
 use tower::ServiceExt;
 
-pub async fn serve(address: &str, app: Router, certificate: &Path, key: &Path) -> io::Result<()> {
+pub struct Credentials {
+    tcp: TlsAcceptor,
+    quic: Arc<quinn::ServerConfig>,
+}
+
+pub fn credentials(certificate: &Path, key: &Path) -> io::Result<Credentials> {
     let certs = CertificateDer::pem_file_iter(certificate)
         .map_err(io::Error::other)?
         .collect::<Result<Vec<_>, _>>()
@@ -34,15 +39,28 @@ pub async fn serve(address: &str, app: Router, certificate: &Path, key: &Path) -
     .with_no_client_auth()
     .with_single_cert(certs, key)
     .map_err(io::Error::other)?;
-    let tcp = TcpListener::bind(address).await?;
-    let local = tcp.local_addr()?;
     config.alpn_protocols = vec![b"h3".to_vec()];
     let quic = quinn::crypto::rustls::QuicServerConfig::try_from(config.clone())
         .map_err(io::Error::other)?;
-    let endpoint =
-        quinn::Endpoint::server(quinn::ServerConfig::with_crypto(Arc::new(quic)), local)?;
+    let quic = Arc::new(quinn::ServerConfig::with_crypto(Arc::new(quic)));
     config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-    let tls = TlsAcceptor::from(Arc::new(config));
+    Ok(Credentials {
+        tcp: TlsAcceptor::from(Arc::new(config)),
+        quic,
+    })
+}
+
+pub async fn serve(address: &str, app: Router, live: crate::reload::Live) -> io::Result<()> {
+    let tcp = TcpListener::bind(address).await?;
+    let local = tcp.local_addr()?;
+    let tls = || {
+        live.borrow()
+            .tls
+            .clone()
+            .expect("TLS listener always has credentials")
+    };
+    let mut updates = live.clone();
+    let endpoint = quinn::Endpoint::server((*tls().quic).clone(), local)?;
     let alt = format!("h3=\":{}\"", local.port())
         .parse::<axum::http::HeaderValue>()
         .map_err(io::Error::other)?;
@@ -56,18 +74,24 @@ pub async fn serve(address: &str, app: Router, certificate: &Path, key: &Path) -
     eprintln!("Rill listening on https://{local} (HTTP/1.1, HTTP/2 and HTTP/3)");
     loop {
         tokio::select! {
+            // Quinn consults the endpoint configuration for initial packet handling.
+            // Keep it current and release its reference to the previous private key.
+            Ok(()) = updates.changed(), if cfg!(unix) => {
+                endpoint.set_server_config(Some((*tls().quic).clone()));
+            }
             incoming = endpoint.accept() => {
                 let Some(incoming) = incoming else { return Err(io::Error::other("QUIC endpoint closed")); };
                 let app = app.clone();
+                let Ok(connecting) = incoming.accept_with(tls().quic.clone()) else { continue };
                 tokio::spawn(async move {
-                    let Ok(conn) = incoming.await else {return};
+                    let Ok(conn) = connecting.await else {return};
                     let app = app.layer(axum::Extension(ConnectInfo(conn.remote_address())));
                     if let Err(error) = serve_h3(conn, app).await { eprintln!("HTTP/3 connection: {error}"); }
                 });
             }
             incoming = tcp.accept() => {
                 let (stream, peer) = incoming?;
-                tokio::spawn(serve_tcp(stream, peer, tls.clone(), app.clone()));
+                tokio::spawn(serve_tcp(stream, peer, tls().tcp.clone(), app.clone()));
             }
         }
     }
@@ -87,20 +111,25 @@ async fn serve_tcp(
         return;
     };
     let h2 = stream.get_ref().1.alpn_protocol() == Some(b"h2");
-    let builder = Builder::new(TokioExecutor::new());
-    let builder = if h2 {
-        builder.http2_only()
-    } else {
-        builder.http1_only()
-    };
     let app = app
         .layer(axum::Extension(ConnectInfo(peer)))
         .into_service::<hyper::body::Incoming>()
         .map_response(normalize_headers);
-    if let Err(error) = builder
-        .serve_connection(TokioIo::new(stream), TowerToHyperService::new(app))
-        .await
-    {
+    let io = TokioIo::new(stream);
+    let service = TowerToHyperService::new(app);
+    let result = if h2 {
+        Builder::new(TokioExecutor::new())
+            .http2_only()
+            .serve_connection(io, service)
+            .await
+    } else {
+        hyper::server::conn::http1::Builder::new()
+            .serve_connection(io, service)
+            .with_upgrades()
+            .await
+            .map_err(Into::into)
+    };
+    if let Err(error) = result {
         eprintln!("HTTPS connection from {peer}: {error}");
     }
 }
