@@ -80,6 +80,54 @@ def start(root, peers, **settings):
     return launch([RILL], dict(env, DOCUMENT_ROOT=str(root), UPSTREAMS=peers, **settings))
 
 
+class KeepAliveOrigin(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def do_GET(self):
+        if self.path == "/api/disconnect":
+            self.server.disconnects += 1
+            self.close_connection = True
+            return
+        body = f"{self.client_address[1]} {self.headers['Host']} {self.path}".encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        if self.path == "/api/retire":
+            self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+def fixed_peer(root):
+    with OriginServer(("127.0.0.1", 0), KeepAliveOrigin) as srv:
+        srv.disconnects = 0
+        thread = Thread(target=srv.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with start(root, f"127.0.0.1:{srv.server_port}") as port:
+                # Each request opens a fresh downstream connection. The upstream stays reusable.
+                def get(path):
+                    status, _, body = request(port, path)
+                    assert status == 200, (status, body)
+                    source, host, target = body.decode().split()
+                    assert (host, target) == ("backend", path), (host, target)
+                    return source
+                first = get("/api/item?x=1&x=2")
+                assert get("/api/retire") == first
+                second = get("/api/item?x=3")
+                assert second != first
+                assert request(port, "/api/disconnect")[0] == 502
+                assert srv.disconnects == 1, "an accepted GET was replayed"
+                get("/api/after-error")
+                assert request(port, "/outside-route")[0] == 404
+        finally:
+            srv.shutdown()
+            thread.join()
+    print("Fixed-peer keep-alive, origin-form query, connection retirement and no replay after delivery passed")
+
+
 def health(root):
     for mode in ("round_robin", "least_connections"):
         with origin("a") as a, origin("b") as b:
@@ -177,6 +225,7 @@ def cache(root):
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
+        fixed_peer(root)
         cache(root)
         health(root)
         keys = root / "certs"

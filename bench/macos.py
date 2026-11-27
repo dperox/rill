@@ -59,18 +59,18 @@ http {{
 """
 
 
-def start_container(running, site, image, port, frontend):
+def start_container(running, site, image, port, frontend, origin="rill"):
     name = f"rill-bench-{uuid4().hex[:10]}"
     # Read warm guest files and proxy over guest loopback for both servers.
-    startup = """
+    startup = f"""
 set -eu
 cp -R /fixtures /tmp/site
-LISTEN=127.0.0.1:9000 DOCUMENT_ROOT=/tmp/site/origin rill &
+LISTEN=127.0.0.1:9000 DOCUMENT_ROOT=/tmp/site/origin {origin} &
 """
     if frontend == "nginx":
         startup += 'exec nginx -p /tmp/ -c /tmp/site/nginx.conf -e stderr'
     else:
-        startup += 'export UPSTREAMS=127.0.0.1:9000 DOCUMENT_ROOT=/tmp/site/front; exec rill'
+        startup += f'export UPSTREAMS=127.0.0.1:9000 DOCUMENT_ROOT=/tmp/site/front; exec {frontend}'
     subprocess.run(
         ["container", "run", "-d", "--rm", "--name", name, "--cpus", "2", "--memory", "1G",
          "-p", f"127.0.0.1:{port}:8080", "-v", f"{site}:/fixtures:ro",
@@ -87,7 +87,12 @@ def main():
     parser.add_argument("--image", default="rill:local")
     parser.add_argument("--wrk", default="wrk")
     parser.add_argument("--nginx", help="also benchmark this native NGINX binary; --image must contain nginx and rill")
+    parser.add_argument("--baseline-rill", type=Path, help="add a native baseline and use rill-base from the same image for all guest origins and the baseline frontend")
+    parser.add_argument("--workload", choices=("all", "proxy", "static"), default="all")
+    parser.add_argument("--rounds", type=int, default=3)
     args = parser.parse_args()
+    if args.rounds < 1 or (args.baseline_rill and not args.nginx):
+        parser.error("--rounds must be positive and --baseline-rill requires --nginx")
     with tempfile.TemporaryDirectory() as directory, ExitStack() as running:
         root = Path(directory)
         site = root / "site"
@@ -101,36 +106,52 @@ def main():
             (root / f"{size}.lua").write_text(validation_script(size))
 
         with ExitStack() as reservations:
-            sockets = [reservations.enter_context(socket.socket()) for _ in range(5)]
+            sockets = [reservations.enter_context(socket.socket()) for _ in range(7 if args.baseline_rill else 5)]
             for sock in sockets:
                 sock.bind(("127.0.0.1", 0))
-            native, origin, published, native_nginx, published_nginx = [sock.getsockname()[1] for sock in sockets]
+            native, origin, published, native_nginx, published_nginx, *baseline_ports = [sock.getsockname()[1] for sock in sockets]
 
         workers = {"TOKIO_WORKER_THREADS": "1", "RILL_BLOCKING_THREADS": "1"}
-        for port, folder, settings in [(origin, "origin", {}), (native, "front", {"UPSTREAMS": f"127.0.0.1:{origin}"})]:
+        baseline = (args.baseline_rill or args.rill).resolve()
+        upstream = {"UPSTREAMS": f"127.0.0.1:{origin}"}
+        processes = [(baseline, origin, "origin", {}), (args.rill.resolve(), native, "front", upstream)]
+        if args.baseline_rill:
+            processes.append((baseline, baseline_ports[0], "front", upstream))
+        for binary, port, folder, settings in processes:
             running.enter_context(process(
-                [str(args.rill.resolve())],
+                [str(binary)],
                 env=dict(PATH=os.environ["PATH"], LISTEN=f"127.0.0.1:{port}",
                          DOCUMENT_ROOT=str(site / folder), **workers, **settings),
             ))
 
-        start_container(running, site, args.image, published, "rill")
+        guest_origin = "rill-base" if args.baseline_rill else "rill"
+        start_container(running, site, args.image, published, "rill", guest_origin)
         servers = [("native", native), ("apple-container", published)]
         if args.nginx:
             config = root / "nginx.conf"
             config.write_text(nginx_config(f"127.0.0.1:{native_nginx}", f"127.0.0.1:{origin}", site / "front"))
             running.enter_context(process([args.nginx, "-p", f"{root}/", "-c", str(config), "-e", "stderr"]))
             (site / "nginx.conf").write_text(nginx_config("0.0.0.0:8080", "127.0.0.1:9000", "/tmp/site/front"))
-            start_container(running, site, args.image, published_nginx, "nginx")
+            start_container(running, site, args.image, published_nginx, "nginx", guest_origin)
             servers = [("rill-native", native), ("nginx-native", native_nginx),
                        ("rill-container", published), ("nginx-container", published_nginx)]
+        if args.baseline_rill:
+            start_container(running, site, args.image, baseline_ports[1], "rill-base", guest_origin)
+            servers += [("baseline-native", baseline_ports[0]), ("baseline-container", baseline_ports[1])]
         writer = csv.writer(sys.stdout, lineterminator="\n")
         writer.writerow(["workload", "bytes", "server", "round", "requests_per_s", "p95_ms", "checked"])
         for size in sizes:
             script = root / f"{size}.lua"
             for workload, path in [("static", f"/{size}.bin"), ("proxy", f"/api/{size}.bin?bench=1")]:
-                for round_number in range(1, 4):
-                    for server, port in (servers if round_number % 2 else servers[::-1]):
+                if args.workload not in ("all", workload):
+                    continue
+                for round_number in range(1, args.rounds + 1):
+                    order = servers if round_number % 2 else servers[::-1]
+                    if args.baseline_rill:
+                        # Each frontend occupies each timing slot once over six rounds.
+                        offset = (round_number - 1) % len(servers)
+                        order = servers[offset:] + servers[:offset]
+                    for server, port in order:
                         sample(args.wrk, script, port, path, 2)
                         row = sample(args.wrk, script, port, path, 5)
                         writer.writerow([workload, size, server, round_number, *row])

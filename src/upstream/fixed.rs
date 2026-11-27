@@ -155,3 +155,45 @@ impl Fixed {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncReadExt;
+
+    #[tokio::test]
+    async fn checkout_discards_an_idle_socket_closed_by_the_peer() {
+        let fixed = Fixed::new("127.0.0.1:80".parse().unwrap());
+        let (client, peer) = tokio::io::duplex(128);
+        let (mut tx, driver) = handshake(TokioIo::new(client)).await.unwrap();
+        let done = tokio::spawn(driver);
+        tx.ready().await.unwrap();
+        fixed.recycle(tx);
+        drop(peer);
+        let _ = done.await.unwrap();
+        assert!(fixed.checkout().is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_budget_and_expiry_close_the_underlying_connections() {
+        let fixed = Fixed::new("127.0.0.1:80".parse().unwrap());
+        let mut peers = Vec::new();
+        for _ in 0..=CAPACITY {
+            let (client, peer) = tokio::io::duplex(128);
+            let (mut tx, driver) = handshake(TokioIo::new(client)).await.unwrap();
+            tokio::spawn(driver);
+            tx.ready().await.unwrap();
+            fixed.recycle(tx);
+            peers.push(peer);
+        }
+        assert_eq!(fixed.idle.lock().unwrap().senders.len(), CAPACITY);
+        let mut byte = [0; 1];
+        assert_eq!(peers.last_mut().unwrap().read(&mut byte).await.unwrap(), 0);
+        tokio::time::advance(IDLE_TIMEOUT).await;
+        tokio::task::yield_now().await;
+        assert!(fixed.idle.lock().unwrap().senders.is_empty());
+        for mut peer in peers {
+            assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+        }
+    }
+}

@@ -37,6 +37,12 @@ Set `"failover":true` on an individual route in `RILL_ROUTES` or the reload file
 
 When establishing the upstream connection fails for a GET or HEAD whose body is already known to be empty, Rill can try one different eligible peer. Both attempts share the 60-second header deadline and use the configured balancing policy. Requests with bodies, writes and WebSocket upgrades get one attempt. A backend HTTP response, a timeout or an error after connection establishment does not trigger failover. The access log identifies the last attempted peer.
 
+### Fixed upstream connections
+
+A route with one plaintext IP address and an explicit port automatically reuses HTTP/1.1 connections for bodyless, origin-form GET requests. Rill checks the current route, access policy and upstream health on every request. The backend receives the original path and query string. DNS names, HTTPS peers, upgrades and uploads use the general HTTP client.
+
+Each eligible pool reserves 48 idle connections for these GETs and 16 for other traffic. Idle connections expire after 90 seconds. If an idle socket closes, Rill can reconnect once when the HTTP client confirms the request was never sent. If the backend receives the request and disconnects before sending response headers, the client receives a gateway error. A reload gives the new route its own pool.
+
 ## WebSockets
 
 HTTP/1.1 WebSocket requests use the same host and path rules, access policies and upstream selection as other proxy requests. Clients can connect with `ws://` on the plain listener or `wss://` on the TLS listener. Configure the upstream as a bare address, an `http://` URL or an `https://` URL. The upstream receives the WebSocket handshake over HTTP/1.1, and Rill relays traffic in both directions after a successful upgrade. Upgrade requests bypass the response cache. Least-connections balancing counts an upgraded connection for the lifetime of the tunnel. An established tunnel keeps its upstream through a configuration reload.
