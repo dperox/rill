@@ -2,10 +2,10 @@
 
 ## Install with Cargo
 
-With a stable Rust toolchain installed, run the following from any directory. Cargo builds the [Japka 0.1.0 crate](https://crates.io/crates/japka/0.1.0) using its published lockfile and installs the `japka` executable.
+With stable Rust and Cargo installed, run this from any directory to install [Japka from crates.io](https://crates.io/crates/japka).
 
 ```sh
-cargo install japka --version 0.1.0 --locked
+cargo install japka
 japka --version
 ```
 
@@ -22,7 +22,9 @@ In a second terminal, run `curl --fail http://127.0.0.1:8080/` to retrieve the p
 
 ## macOS
 
-From a source checkout on Apple silicon, package the binary, sample site and licenses together. Use `amd64` for Intel Macs. The archives target macOS 15 and later.
+For a native install, use `cargo install japka`. The [release downloads](https://github.com/dperox/japka/releases/latest) also include archives for Apple silicon and Intel Macs that target macOS 15 and later.
+
+To build your own archive from a source checkout on Apple silicon, run the commands below. Use `amd64` for Intel Macs.
 
 ```sh
 ./deploy/package-macos.sh arm64 dist
@@ -31,8 +33,6 @@ cd dist/japka
 ./japka config test
 LISTEN=127.0.0.1:8080 ./japka
 ```
-
-Download the binary for your platform from the [Japka 0.1.0 release](https://github.com/dperox/japka/releases/tag/v0.1.0).
 
 From another terminal, run `curl --fail http://127.0.0.1:8080/` to retrieve the sample site. To build from a source checkout, run `cargo build --release --locked` and use `target/release/japka`. Native macOS serves static files with buffered reads and supports SIGHUP reloads. [Reload procedure](reload.md)
 
@@ -51,23 +51,25 @@ Use the same curl request from the Mac. A read-only site mount uses `-v "$PWD/si
 
 ## Native Windows
 
-The x86-64 Windows GNU release at `7082e92` was cross-compiled on Linux and exercised on Windows 11 Pro. Build it from Linux with the GNU MinGW-w64 x86-64 C compiler and linker installed:
+Install with `cargo install japka`, then open PowerShell in the directory containing your website’s `index.html`.
+
+```powershell
+$env:DOCUMENT_ROOT = (Get-Location).Path
+$env:LISTEN = '127.0.0.1:8080'
+japka config test
+if ($LASTEXITCODE -eq 0) { japka }
+```
+
+The [release downloads](https://github.com/dperox/japka/releases/latest) also include a Windows x86-64 archive with the executable and sample site. To serve the sample, extract the archive, open a fresh PowerShell window alongside `japka.exe`, and run `.\japka.exe` with the default document root (`.\public`).
+
+In a second shell, run `curl.exe -i http://127.0.0.1:8080/` and verify the expected page. Native checks covered static GET and HEAD, HTTPS, HTTP proxying and policies, TCP and UDP forwarding, and configuration preflight. On Windows, restart Japka to apply a new configuration. Set `JAPKA_SENDFILE=0` before startup to use buffered file delivery instead of Windows TransmitFile. [Windows file settings](static-io.md#windows-transmitfile)
+
+To cross-compile the Windows executable on Linux, install the GNU MinGW-w64 x86-64 C compiler and linker and run the following from the repository root. Cargo writes `japka.exe` to `target/x86_64-pc-windows-gnu/release/`.
 
 ```sh
 rustup target add x86_64-pc-windows-gnu
 cargo build --release --locked --target x86_64-pc-windows-gnu
 ```
-
-Copy `target/x86_64-pc-windows-gnu/release/japka.exe` and the sample `public` directory to the Windows host. From their parent directory in PowerShell:
-
-```powershell
-$env:DOCUMENT_ROOT = (Resolve-Path .\public).Path
-$env:LISTEN = '127.0.0.1:8080'
-.\japka.exe config test
-if ($LASTEXITCODE -eq 0) { .\japka.exe }
-```
-
-In a second shell, run `curl.exe -i http://127.0.0.1:8080/` and verify the expected page. Native checks covered static GET and HEAD, HTTPS, HTTP proxying and policies, TCP and UDP forwarding, and configuration preflight. On Windows, restart Japka to apply a new configuration. Set `JAPKA_SENDFILE=0` before startup to use buffered file delivery instead of Windows TransmitFile. [Windows file settings](static-io.md#windows-transmitfile)
 
 ## Docker
 
