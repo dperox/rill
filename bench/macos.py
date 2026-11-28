@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from uuid import uuid4
 
 REPO = Path(__file__).resolve().parent.parent
@@ -81,6 +82,18 @@ def sample(wrk, script, port, path, seconds):
     return rate, f"{float(p95_us) / 1000:.3f}", checked
 
 
+def wait_for_port(port, seconds=10):
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=1).close()
+            return
+        except OSError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.05)
+
+
 def nginx_config(listen, upstream, document_root):
     return f"""
 daemon off;
@@ -142,6 +155,7 @@ def main():
     parser.add_argument("--wrk", default="wrk")
     parser.add_argument("--nginx", default="nginx", help="native NGINX executable")
     parser.add_argument("--rounds", type=int, default=3)
+    parser.add_argument("--native-only", action="store_true", help="skip the Apple container guests")
     args = parser.parse_args()
     if args.rounds < 1:
         parser.error("--rounds must be positive")
@@ -174,10 +188,13 @@ def main():
         config.write_text(nginx_config(f"127.0.0.1:{native_nginx}", f"127.0.0.1:{origin}", site / "front"))
         running.enter_context(process([args.nginx, "-p", f"{root}/", "-c", str(config), "-e", "stderr"]))
         (site / "nginx.conf").write_text(nginx_config("0.0.0.0:8080", "127.0.0.1:9000", "/tmp/site/front"))
-        start_container(running, site, args.image, published, "japka")
-        start_container(running, site, args.image, published_nginx, "nginx")
-        servers = [("japka-native", native), ("nginx-native", native_nginx),
-                   ("japka-container", published), ("nginx-container", published_nginx)]
+        servers = [("japka-native", native), ("nginx-native", native_nginx)]
+        if not args.native_only:
+            start_container(running, site, args.image, published, "japka")
+            start_container(running, site, args.image, published_nginx, "nginx")
+            servers += [("japka-container", published), ("nginx-container", published_nginx)]
+        for _, port in servers:
+            wait_for_port(port)
         writer = csv.writer(sys.stdout, lineterminator="\n")
         writer.writerow(["workload", "bytes", "server", "round", "requests_per_s", "p95_ms", "checked"])
         for size in sizes:

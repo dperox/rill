@@ -31,12 +31,12 @@ Open <http://127.0.0.1:8080/> for the bundled site. [Mount your own site](docs/d
 
 ## Performance on an M4 Mac mini
 
-For 4 KiB responses, Japka served static files faster in both deployments, while NGINX handled more proxied requests. The table shows median requests per second over three rounds with 64 persistent HTTP/1.1 connections.
+For 4 KiB responses, Japka served static files faster in both deployments, while NGINX handled more proxied requests. The table shows median requests per second over three rounds with 64 persistent HTTP/1.1 connections. The native columns are from the current revision. The container columns are from an earlier Japka 0.2.0 run.
 
 | 4 KiB workload | Japka native | NGINX native | Japka in Apple container | NGINX in Apple container |
 | --- | ---: | ---: | ---: | ---: |
-| Static file | 159,861 | 49,287 | 69,395 | 64,308 |
-| Reverse proxy | 68,538 | 78,492 | 46,233 | 51,604 |
+| Static file | 237,814 | 62,577 | 69,395 | 64,308 |
+| Reverse proxy | 107,956 | 124,784 | 46,233 | 51,604 |
 
 With 256 KiB proxy responses, Japka handled more requests per second in both deployments. The full report includes p95 latency, server settings, and reproduction steps. [Mac mini benchmark](bench/README.md)
 
