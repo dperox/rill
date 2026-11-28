@@ -42,4 +42,4 @@ When an agent proposes adding a route, the plan shows its host, path prefix, and
 
 Translate an `nginx -T` dump into a candidate configuration, review the reported differences, and compare responses before switching traffic. [NGINX migration guide](https://github.com/japka-rs/japka/blob/main/docs/migration.md)
 
-[Documentation](https://github.com/japka-rs/japka/blob/main/docs/README.md) · [MIT license](LICENSE)
+[Performance benchmarks](https://github.com/japka-rs/japka/blob/main/docs/performance.md) · [Documentation](https://github.com/japka-rs/japka/blob/main/docs/README.md) · [MIT license](LICENSE)

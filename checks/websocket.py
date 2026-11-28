@@ -12,6 +12,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Thread
 
+from routing import launch
 from upstreams import certificates
 from reload import LOOPBACK, JAPKA, free_port, listening, make_certificate, publish, reload, stop, wait_until
 
@@ -150,6 +151,28 @@ def active_config(*origins):
     }
 
 
+def exercise_direct(work, origin):
+    with launch([JAPKA], {
+        "DOCUMENT_ROOT": str(work),
+        "UPSTREAMS": f"{LOOPBACK}:{origin.server_port}",
+        "JAPKA_SENDFILE": "0",
+    }) as port, ExitStack() as stack:
+        sock, reader = connect(port, stack)
+        send_upgrade(sock, "/api/socket?direct=1")
+        status, headers = read_head(reader)
+        assert status == 101, (status, headers)
+        assert headers[b"connection"] == b"upgrade"
+        assert headers[b"upgrade"] == b"websocket"
+        assert headers[b"sec-websocket-accept"] == ACCEPT.encode()
+        for name in (b"x-response-hop", b"content-length", b"transfer-encoding"):
+            assert name not in headers, headers
+        assert read_frame(reader) == (1, origin.label)
+        sock.sendall(frame(b"direct echo", masked=True))
+        assert read_frame(reader) == (1, origin.label + b":direct echo")
+        sock.sendall(frame(b"", masked=True, opcode=8))
+        assert read_frame(reader) == (8, b"")
+
+
 def exercise(work, old, new, compress):
     with ExitStack() as stack:
         http_port, tls_port = free_port(), free_port()
@@ -235,6 +258,7 @@ def main():
             Thread(target=origin.serve_forever, daemon=True).start()
             stack.callback(origin.shutdown)
             origins.append(origin)
+        exercise_direct(work, origins[0])
         for compress in ("0", "1"):
             exercise(work, *origins, compress)
     print("Plain and TLS WebSocket upgrades, buffering, cache bypass, leases and reload verified")

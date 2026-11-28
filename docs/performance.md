@@ -38,6 +38,33 @@ In the pinned run, throughput changed by −0.28% to +1.13% across individual pa
 - **Fixtures and checks.** The client fetched warm 4 KiB and 256 KiB files made from repeated `0123456789abcdef` bytes, directly and through a reverse proxy. After two seconds of warm-up, it measured five seconds per sample in the initial and fresh-guest runs and eight seconds in the two single-guest follow-ups. All 144 measured samples passed the socket, timeout, and response-count checks. This includes NGINX 1.31.10 reference samples from the initial comparison. All **40,207,900 measured responses** returned HTTP 200 and matched the expected bytes. [Per-sample measurements](performance-samples.csv)
 - **Scope.** The results cover warm plaintext HTTP/1.1 static and proxy requests at concurrency 64 on this host. TLS, HTTP/2, and HTTP/3 were outside the test scope.
 
+## Aviv’s native GET benchmark
+
+Aviv measured the header-removal and GET-dispatch changes on an M4 Mac mini running macOS 26.6.2 with Rust 1.98.1. The native harness used the default upstream client, one network worker, one blocking worker, and a shared Japka origin. The table gives the medians of three rounds with 64 persistent HTTP/1.1 connections. All 9,775,647 responses returned HTTP 200 and matched the fixture. These measurements used a different host setup from the cleanup comparison above. [PR #5](https://github.com/japka-rs/japka/pull/5) · [Per-round measurements](performance-pr5-native.csv) · [Harness at the measured revision](https://github.com/japka-rs/japka/blob/649b4534a1fdaa2e09052b4576ed1d922c4e165f/bench/macos.py)
+
+| HTTP/1.1 GET | Japka req/s | NGINX req/s | Japka p95 ms | NGINX p95 ms |
+| --- | ---: | ---: | ---: | ---: |
+| Static 4 KiB | 237,814 | 62,577 | 0.296 | 1.046 |
+| Proxy 4 KiB | 107,956 | 124,784 | 0.676 | 0.577 |
+| Static 256 KiB | 25,744 | 44,196 | 2.830 | 1.487 |
+| Proxy 256 KiB | 16,811 | 15,197 | 4.554 | 5.065 |
+
+The 4 KiB proxy result was 86.5% of NGINX throughput. The dedicated upstream pool remains an opt-in setting for eligible single-peer routes. [Fixed-upstream configuration](routing.md)
+
+### Fixed-upstream comparison
+
+A separate M4 Mac mini running macOS 27.2.1 compared the release build of `e949c39` against the integrated PR. All five frontends used the same loopback Japka 0.2.0 origin. The client fetched the same 4 KiB proxied fixture with two wrk threads and 64 persistent connections. Each frontend occupied each timing slot once across five rounds, with two seconds of warm-up and five measured seconds per sample. Both Japka builds used Rust 1.100.1 and one network worker. NGINX 1.31.10 used one worker.
+
+| Native 4 KiB proxy | Median req/s | Median p95 ms | Throughput relative to NGINX |
+| --- | ---: | ---: | ---: |
+| Before PR, default client | 77,394 | 0.947 | 85.8% |
+| After PR, default client | 81,206 | 0.904 | 90.0% |
+| Before PR, fixed pool | 84,758 | 0.871 | 94.0% |
+| After PR, fixed pool | 86,782 | 0.845 | 96.2% |
+| NGINX | 90,187 | 0.775 | 100.0% |
+
+With the default client, the PR raised median throughput by 4.93%. With `JAPKA_FIXED_UPSTREAM=1`, it raised median throughput by 2.39%. All 10,767,382 measured responses matched the expected HTTP 200 status and bytes. These are end-to-end throughput and latency measurements. [All warm-up and measured samples](performance-pr5-fixed.csv)
+
 ## Run the end-to-end suite
 
 The standalone Goose client in `perf/` runs each of the four workloads separately. It uses HTTP/1.1 keep-alive, reads every body, and verifies HTTP 200 and every fixture byte. Each transaction covers one complete response, including validation. A bad status, wrong protocol, truncated transfer, or changed byte fails the run. Japka’s published Cargo package has no load-test dependencies. [Goose client](../perf/src/main.rs) · [Suite launcher](../perf/run.py)
