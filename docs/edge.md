@@ -6,7 +6,7 @@ Japka uses the same port for TCP (TLS 1.2 and TLS 1.3, negotiating HTTP/2 or HTT
 
 ## Redirect plaintext HTTP
 
-Set `JAPKA_HTTPS_REDIRECT=app.example` (or `app.example:8443`) at startup to return 308 from the plaintext HTTP listener. Japka preserves the request path and query. The configured authority supplies the destination even when the client sends a different Host. Access rules and rate limits still apply. All hosts redirect to this single public authority. Point it at a working HTTPS endpoint. Leaving the setting unset preserves ordinary plaintext service.
+Set `JAPKA_HTTPS_REDIRECT=app.example` (or `app.example:8443`) at startup to return 308 from the plaintext HTTP listener. Japka preserves the request path and query. The configured authority supplies the destination even when the client sends a different Host. Japka applies access rules and rate limits to these requests. All hosts redirect to this single public authority. Point it at a working HTTPS endpoint. Leave the setting unset to serve requests over plaintext HTTP.
 
 ## Per-host certificates
 
@@ -19,7 +19,7 @@ Add exact DNS names to `tls.hosts` in the reload file. Each certificate must cov
 ]}}
 ```
 
-TCP TLS and QUIC select the chain during the handshake using SNI. HTTP Host routing then selects the application or static site. The default chain remains required. On Unix, SIGHUP publishes the entire certificate set with routes and site roots. Duplicate names, invalid named certificates or mismatched keys reject the candidate.
+TCP TLS and QUIC select the chain during the handshake using SNI. HTTP Host routing then selects the application or static site. Japka requires a default certificate chain. On Unix, SIGHUP publishes the entire certificate set with routes and site roots. Duplicate names, invalid named certificates or mismatched keys reject the candidate.
 
 ## Verify HTTPS protocols
 

@@ -45,7 +45,7 @@ place.
 
 Native Windows uses Winsock TransmitFile by default for eligible plaintext HTTP/1 GET responses larger than 64 KiB. Set `JAPKA_SENDFILE=0` before startup to use buffered delivery. The dispatcher flushes the response headers before starting the transfer and waits for the advertised byte count before processing the next response on that connection.
 
-Japka reserves at most two direct transfers per process. Additional downloads immediately take the buffered path. Two dedicated completion workers keep slow transfers off the Tokio network and filesystem pools. A reset or short transfer ends that response. HEAD, byte ranges, TLS, and gzip keep their existing handling. The immutable asset cache is Linux-only.
+Japka reserves at most two direct transfers per process. Additional downloads immediately take the buffered path. Two dedicated completion workers keep slow transfers off the Tokio network and filesystem pools. A reset or short transfer ends that response. HEAD sends headers without transferring the file. Byte-range, TLS, and gzip responses use buffered delivery.
 
 ## Immutable assets
 

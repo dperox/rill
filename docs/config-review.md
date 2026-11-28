@@ -48,7 +48,7 @@ Read the review directly from the saved plan. This prints the deployment action,
 jq -r '.review[]' plan.json
 ```
 
-The example yields one added route, one unchanged route and a switch from inherited to file-defined routing. Future edits to the startup route list will no longer affect these explicit routes. Reordering equivalent route entries creates no route changes. Reordering upstreams within a route appears as a modification. Formatting-only file changes still produce a new file digest.
+The example yields one added route, one unchanged route and a switch from inherited to file-defined routing. Manage the explicit routes in the configuration file. Reordering equivalent route entries creates no route changes. Reordering upstreams within a route appears as a modification. Formatting-only edits produce a new file digest.
 
 ## Approve and apply on a native Unix service
 

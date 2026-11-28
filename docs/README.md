@@ -30,4 +30,4 @@ For specialized deployments, see [access policies](policy.md), [static file deli
 
 ## Performance
 
-See the [native macOS and Apple container benchmark](performance.md) for static and reverse-proxy throughput, p95 latency, and the [Cargo end-to-end suite](performance.md#run-the-end-to-end-suite).
+See the throughput and p95 latency for static files and proxied responses on native macOS and in Apple containers. Run the same workloads with the end-to-end suite. [Benchmark results](performance.md#native-macos-and-apple-containers) · [Run the suite](performance.md#run-the-end-to-end-suite)

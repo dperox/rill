@@ -7,7 +7,7 @@ umask 077
 nginx -T > nginx.dump && japka migrate nginx nginx.dump > migration.json
 ```
 
-Japka also accepts the dump on stdin. It reads included content from the dump itself. It writes one JSON object to stdout and makes no configuration changes. The report is a draft for the operator. In particular, a proxy route in the candidate may still have an unsupported authentication or body-size directive in the source.
+Japka also accepts the dump on stdin and reads included content from the dump itself. It writes one JSON report to stdout. Review and deploy the candidate in separate steps. Check the diagnostics for directives that need to be configured separately, such as authentication or request body size limits on a translated proxy route.
 
 ## Contract for automation
 
