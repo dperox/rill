@@ -1,6 +1,6 @@
 [package]
 name = "japka"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 description = "HTTP reverse proxy, load balancer and static file server"
 license = "MIT"

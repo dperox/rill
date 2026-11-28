@@ -40,14 +40,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
         run: |
           set -euo pipefail
+          : "${DOCKERHUB_USERNAME:?Set the Docker Hub login in repository variables}"
+          : "${DOCKERHUB_NAMESPACE:?Set the Docker Hub destination namespace in repository variables}"
           sudo apt-get update -qq
           sudo apt-get install -y skopeo
           printf '%s' "$GH_TOKEN" | skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          printf '%s' "$DOCKERHUB_TOKEN" | skopeo login docker.io -u dperox --password-stdin
+          printf '%s' "$DOCKERHUB_TOKEN" | skopeo login docker.io -u "$DOCKERHUB_USERNAME" --password-stdin
           src=docker://ghcr.io/japka-rs/japka
-          dst=docker://docker.io/dperox/japka
+          dst="docker://docker.io/$DOCKERHUB_NAMESPACE/japka"
           digest=$(skopeo inspect --format '{{.Digest}}' "$src:latest")
           skopeo inspect --raw "$src@$digest" | jq -e '[.manifests[].platform.architecture] | contains(["amd64","arm64"])'
           revision=$(skopeo inspect "$src@$digest" | jq -er '.Labels["org.opencontainers.image.revision"]')
