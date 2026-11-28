@@ -1,0 +1,48 @@
+[package]
+name = "japka"
+version = "0.1.0"
+edition = "2024"
+description = "HTTP reverse proxy, load balancer and static file server"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/dperox/japka"
+
+[dependencies]
+futures-util = "0.3"
+sync_wrapper = { version = "1", features = ["futures"] }
+http-kit = { version = "=0.8.2", features = ["fs"] }
+http-kit-h1 = { version = "=0.6.2", features = ["fs"] }
+http-kit-io = { version = "=0.6.2", features = ["tokio"] }
+axum = { version = "0.8", default-features = false, features = ["form", "http1", "json", "matched-path", "query", "tokio", "tower-log", "tracing"] }
+base64 = "0.22"
+ring = "0.17"
+httpdate = "1.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time", "sync", "fs", "signal"] }
+tower-http = { version = "0.6", features = ["fs", "compression-gzip"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio", "server-auto", "service", "http2"] }
+tower = { version = "0.5", features = ["make", "util"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
+bytes = "1"
+http-body-util = "0.1"
+async-stream = "0.3"
+ipnet = "2"
+hyper = "=1.13.0"
+futures-core = "0.3"
+mime_guess = "2"
+libc = "0.2"
+tokio-util = { version = "0.7", features = ["io"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hyper-rustls = { version = "0.27.10", default-features = false, features = ["native-tokio", "http1", "tls12", "ring"] }
+
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+socket2 = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_System_IO", "Win32_System_Threading"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }

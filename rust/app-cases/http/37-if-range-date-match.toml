@@ -1,0 +1,14 @@
+[request]
+method = "GET"
+path = "/bytes.bin"
+
+[request.headers]
+If-Range = "Tue, 14 Nov 2023 22:13:20 GMT"
+Range = "bytes=0-3"
+
+[response]
+status = 206
+
+[response.headers]
+content-range = "bytes 0-3/256"
+content-type = "application/octet-stream"

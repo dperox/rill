@@ -1,0 +1,13 @@
+[request]
+method = "GET"
+path = "/index.html"
+
+[request.headers]
+If-Match = '"6553f100-15"'
+if-match = '"6553f100-15"'
+
+[response]
+status = 400
+
+[response.headers]
+content-type = "text/html"

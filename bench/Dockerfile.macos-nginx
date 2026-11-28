@@ -1,0 +1,5 @@
+FROM ghcr.io/dperox/japka:latest AS japka
+FROM nginx:1.31.10
+COPY --from=japka /usr/local/bin/japka /usr/local/bin/japka
+ENV LISTEN=0.0.0.0:8080
+USER 10001:10001

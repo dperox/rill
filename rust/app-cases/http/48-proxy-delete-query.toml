@@ -1,0 +1,12 @@
+[request]
+method = "DELETE"
+path = "/api/items?id=1&id=2"
+
+[request.headers]
+X-Test = "delete"
+
+[response]
+status = 200
+
+[response.headers]
+content-type = "application/json"

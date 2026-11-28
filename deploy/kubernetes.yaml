@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: japka
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: japka
+  template:
+    metadata:
+      labels:
+        app: japka
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: japka
+          image: japka:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: LISTEN
+              value: "0.0.0.0:8080"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "64Mi"
+            limits:
+              cpu: "1"
+              memory: "256Mi"
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: japka
+spec:
+  type: ClusterIP
+  selector:
+    app: japka
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

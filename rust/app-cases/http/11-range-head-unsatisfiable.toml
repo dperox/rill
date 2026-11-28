@@ -1,0 +1,13 @@
+[request]
+method = "HEAD"
+path = "/bytes.bin"
+
+[request.headers]
+Range = "bytes=256-"
+
+[response]
+status = 416
+
+[response.headers]
+content-range = "bytes */256"
+content-type = "text/html"

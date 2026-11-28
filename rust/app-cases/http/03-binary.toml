@@ -1,0 +1,11 @@
+[request]
+method = "GET"
+path = "/bytes.bin?v=1"
+
+[response]
+status = 200
+binary = true
+
+[response.headers]
+accept-ranges = "bytes"
+content-type = "application/octet-stream"

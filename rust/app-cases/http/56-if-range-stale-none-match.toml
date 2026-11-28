@@ -1,0 +1,11 @@
+[request]
+method = "GET"
+path = "/bytes.bin"
+
+[request.headers]
+If-None-Match = "*"
+If-Range = "Tue, 14 Nov 2023 22:13:19 GMT"
+Range = "bytes=256-"
+
+[response]
+status = 304

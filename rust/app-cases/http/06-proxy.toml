@@ -1,0 +1,12 @@
+[request]
+method = "GET"
+path = "/api/search?q=a%20b"
+
+[request.headers]
+X-Test = "trace"
+
+[response]
+status = 200
+
+[response.headers]
+content-type = "application/json"

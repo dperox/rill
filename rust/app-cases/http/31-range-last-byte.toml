@@ -1,0 +1,14 @@
+[request]
+method = "GET"
+path = "/bytes.bin"
+
+[request.headers]
+Range = "bytes=255-"
+
+[response]
+status = 206
+binary = true
+
+[response.headers]
+content-range = "bytes 255-255/256"
+content-type = "application/octet-stream"

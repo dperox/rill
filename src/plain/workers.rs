@@ -1,0 +1,91 @@
+//! Run each plaintext worker's socket readiness and local tasks on the same thread.
+use super::{Transport, is_transient_accept_error, spawn_socket};
+use crate::PlainApp;
+use futures_util::{StreamExt, stream::FuturesUnordered};
+use http_kit_io::{FromStd, Listener, tokio::Tokio};
+use std::{io, net::TcpListener, time::Duration};
+use tokio::{
+    runtime::{Builder, LocalRuntime},
+    sync::oneshot,
+};
+
+#[derive(Clone, Copy)]
+pub struct WorkerReactors {
+    workers: usize,
+    blocking_threads: usize,
+}
+
+impl WorkerReactors {
+    pub fn new(workers: usize, blocking_threads: usize) -> Self {
+        let workers = workers.max(1);
+        Self {
+            workers,
+            blocking_threads: blocking_threads.max(workers),
+        }
+    }
+
+    pub fn runtime(self, index: usize) -> io::Result<LocalRuntime> {
+        // Split the process-wide filesystem/DNS budget, including the remainder.
+        let limit = (self.blocking_threads / self.workers
+            + usize::from(index < self.blocking_threads % self.workers))
+        .max(1);
+        Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(limit)
+            .build_local(Default::default())
+    }
+
+    pub async fn serve(
+        self,
+        listener: tokio::net::TcpListener,
+        app: PlainApp,
+        transport: Transport,
+    ) -> io::Result<()> {
+        let listener = listener.into_std()?;
+        let mut finished = FuturesUnordered::new();
+        let mut shutdown = Vec::new();
+        for index in 1..self.workers {
+            let listener = listener.try_clone()?;
+            let app = app.clone();
+            let (stop, stopped) = oneshot::channel::<()>();
+            let (result, done) = oneshot::channel();
+            std::thread::Builder::new()
+                .name(format!("japka-h1-{index}"))
+                .spawn(move || {
+                    let outcome = self.runtime(index).and_then(|runtime| {
+                        runtime.block_on(async move {
+                            tokio::select! {
+                                result = accept(listener, app, transport) => result,
+                                _ = stopped => Ok(()),
+                            }
+                        })
+                    });
+                    let _ = result.send(outcome);
+                })?;
+            shutdown.push(stop);
+            finished.push(done);
+        }
+        // Returning (including cancellation) drops the stop senders. A failed
+        // worker propagates its error even if no further connections arrive.
+        tokio::select! {
+            result = accept(listener, app, transport) => result,
+            Some(result) = finished.next() => result.map_err(io::Error::other)?,
+        }
+    }
+}
+
+async fn accept(listener: TcpListener, app: PlainApp, transport: Transport) -> io::Result<()> {
+    let listener = Tokio.tcp_listener(listener)?;
+    loop {
+        let (stream, peer) = match listener.accept().await {
+            Ok(accepted) => accepted,
+            Err(error) if is_transient_accept_error(&error) => continue,
+            Err(error) => {
+                eprintln!("Plaintext worker accept error: {error}");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+        };
+        spawn_socket(stream, peer, app.clone(), transport);
+    }
+}

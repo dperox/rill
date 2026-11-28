@@ -1,0 +1,9 @@
+[request]
+method = "GET"
+path = "/index.html"
+
+[request.headers]
+If-Modified-Since = "Tue, 14 Nov 2023 22:13:20 GMT"
+
+[response]
+status = 304

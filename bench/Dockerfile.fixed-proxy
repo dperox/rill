@@ -1,0 +1,13 @@
+FROM rust:1-bookworm AS build
+WORKDIR /baseline
+ADD base.tgz /baseline/
+RUN cargo build --release --locked && cp target/release/rill /usr/local/bin/rill-base
+WORKDIR /candidate
+ADD candidate.tgz /candidate/
+RUN cargo build --release --locked && ! cmp -s /usr/local/bin/rill-base target/release/rill
+
+FROM nginx:1.31.10
+COPY --from=build /usr/local/bin/rill-base /usr/local/bin/japka-base
+COPY --from=build /candidate/target/release/rill /usr/local/bin/japka
+ENV LISTEN=0.0.0.0:8080
+USER 10001:10001

@@ -1,0 +1,98 @@
+name: Release image
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: japka-release-image
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/dperox/japka
+
+jobs:
+  build:
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      packages: write
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Validate release tag matches Cargo.toml
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "Release tag $GITHUB_REF_NAME does not match Cargo.toml version $version" >&2
+            exit 1
+          fi
+      - name: Build and push native image
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker buildx create --use --driver docker-container
+          build=(docker buildx build --provenance=false -f deploy/Dockerfile
+            --label "org.opencontainers.image.version=${GITHUB_REF_NAME#v}"
+            --label "org.opencontainers.image.revision=$GITHUB_SHA")
+          "${build[@]}" --load -t japka:preflight .
+          docker run --rm japka:preflight config test
+          "${build[@]}" --output "type=image,name=$IMAGE,push-by-digest=true,name-canonical=true,push=true" \
+            --metadata-file "$RUNNER_TEMP/image.json" .
+          mkdir -p "$RUNNER_TEMP/digests"
+          digest=$(jq -er '."containerimage.digest"' "$RUNNER_TEMP/image.json")
+          echo "$IMAGE@$digest" > "$RUNNER_TEMP/digests/$ARCH.txt"
+      - name: Upload image digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: japka-image-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/${{ matrix.arch }}.txt
+          if-no-files-found: error
+
+  manifest:
+    needs: build
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download image digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: japka-image-digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+      - name: Publish the latest multi-platform image
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          digest_amd64=$(<"$RUNNER_TEMP/digests/amd64.txt")
+          digest_arm64=$(<"$RUNNER_TEMP/digests/arm64.txt")
+          [[ -n "$digest_amd64" && -n "$digest_arm64" ]]
+          tag="$IMAGE:latest"
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          latest=$(GH_TOKEN="$TOKEN" gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          [[ "$latest" == "$GITHUB_REF_NAME" ]]
+          docker buildx imagetools create -t "$tag" "$digest_amd64" "$digest_arm64"
+          docker buildx imagetools inspect "$tag"

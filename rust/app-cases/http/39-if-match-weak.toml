@@ -1,0 +1,12 @@
+[request]
+method = "GET"
+path = "/index.html"
+
+[request.headers]
+If-Match = 'W/"6553f100-15"'
+
+[response]
+status = 412
+
+[response.headers]
+content-type = "text/html"

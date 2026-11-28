@@ -1,0 +1,10 @@
+[request]
+method = "GET"
+path = "/bytes.bin"
+
+[request.headers]
+If-None-Match = "*"
+Range = "bytes=256-"
+
+[response]
+status = 304

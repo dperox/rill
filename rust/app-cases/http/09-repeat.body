@@ -1,0 +1,1 @@
+["B", "GET", "/api/search?q=a%20b", "trace", ""]
