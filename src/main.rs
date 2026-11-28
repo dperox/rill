@@ -78,7 +78,24 @@ fn is_protected_header(name: &header::HeaderName) -> bool {
     )
 }
 
+fn is_hop_header(name: &header::HeaderName) -> bool {
+    matches!(
+        *name,
+        header::CONNECTION
+            | header::PROXY_AUTHENTICATE
+            | header::PROXY_AUTHORIZATION
+            | header::TE
+            | header::TRAILER
+            | header::TRANSFER_ENCODING
+            | header::UPGRADE
+    ) || matches!(name.as_str(), "keep-alive" | "proxy-connection")
+}
+
 fn strip_hop_headers(headers: &mut HeaderMap) {
+    // Most messages carry no hop-by-hop fields. One scan avoids a hash lookup per name.
+    if !headers.keys().any(is_hop_header) {
+        return;
+    }
     if let header::Entry::Occupied(connection) = headers.entry(header::CONNECTION) {
         let (_, mut values) = connection.remove_entry_mult();
         let first = values.next().unwrap();
@@ -95,16 +112,16 @@ fn strip_hop_headers(headers: &mut HeaderMap) {
         }
     }
     for name in [
-        "keep-alive",
-        "proxy-connection",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "te",
-        "trailer",
-        "transfer-encoding",
-        "upgrade",
+        header::HeaderName::from_static("keep-alive"),
+        header::HeaderName::from_static("proxy-connection"),
+        header::PROXY_AUTHENTICATE,
+        header::PROXY_AUTHORIZATION,
+        header::TE,
+        header::TRAILER,
+        header::TRANSFER_ENCODING,
+        header::UPGRADE,
     ] {
-        headers.remove(header::HeaderName::from_static(name));
+        headers.remove(name);
     }
 }
 
@@ -616,7 +633,7 @@ async fn run(
     }));
     let app = PlainApp {
         router: app,
-        direct: fixed_upstream.then_some(dispatch),
+        direct: Some(dispatch),
     };
     let initial_policies = live.borrow().policies.clone();
     let app = initial_policies.apply_inner(app, live.clone());
@@ -784,5 +801,14 @@ mod tests {
         assert!(!headers.contains_key(header::TRANSFER_ENCODING));
         assert!(!headers.contains_key("x-hop"));
         assert!(!headers.contains_key("x-hop-2"));
+
+        let mut headers = HeaderMap::new();
+        headers.insert("keep-alive", header::HeaderValue::from_static("timeout=5"));
+        headers.insert(header::TE, header::HeaderValue::from_static("trailers"));
+        headers.insert(header::ETAG, header::HeaderValue::from_static("\"v1\""));
+        strip_hop_headers(&mut headers);
+        assert!(!headers.contains_key("keep-alive"));
+        assert!(!headers.contains_key(header::TE));
+        assert_eq!(headers.get(header::ETAG).unwrap(), "\"v1\"");
     }
 }
