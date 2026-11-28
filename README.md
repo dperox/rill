@@ -24,7 +24,7 @@ Try the [sample site](docs/deployment.md#install-with-cargo) or download a [preb
 ## Run with Docker
 
 ```sh
-docker run --rm -p 127.0.0.1:8080:8080 ghcr.io/dperox/japka:latest
+docker run --rm -p 127.0.0.1:8080:8080 ghcr.io/japka-rs/japka:latest
 ```
 
 Open <http://127.0.0.1:8080/> for the bundled site. [Mount your own site](docs/deployment.md#serve-your-own-site) · [Deploy to Kubernetes](docs/deployment.md#kubernetes)

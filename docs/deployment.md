@@ -42,7 +42,7 @@ Japka serves `./public` by default. Set `DOCUMENT_ROOT` to change the site direc
 The published image includes a sample site and supports Linux AMD64 and ARM64. This command exposes it on port 8080 on your machine.
 
 ```sh
-docker run --rm --name japka -p 127.0.0.1:8080:8080 ghcr.io/dperox/japka:latest
+docker run --rm --name japka -p 127.0.0.1:8080:8080 ghcr.io/japka-rs/japka:latest
 ```
 
 In a second terminal, run `curl --fail http://127.0.0.1:8080/`. Look for **Japka is running** in the response. Run `docker stop japka` before starting another example on the same port.
@@ -54,7 +54,7 @@ From the directory containing your public website files, mount that directory re
 ```sh
 docker run --rm -p 127.0.0.1:8080:8080 \
   --mount "type=bind,src=$PWD,dst=/app/public,readonly" \
-  ghcr.io/dperox/japka:latest
+  ghcr.io/japka-rs/japka:latest
 ```
 
 For a reverse proxy, attach Japka to the backend’s Docker network. For example, add `--network app-net -e UPSTREAMS=api:9001` before the image name if the backend is reachable as `api` on that network.
@@ -65,7 +65,7 @@ If your routes are in `config/japka.json`, mount the directory and validate the 
 
 ```sh
 docker run --rm --mount "type=bind,src=$PWD/config,dst=/etc/japka,readonly" \
-  -e JAPKA_CONFIG=/etc/japka/japka.json ghcr.io/dperox/japka:latest config test
+  -e JAPKA_CONFIG=/etc/japka/japka.json ghcr.io/japka-rs/japka:latest config test
 ```
 
 To start the server, keep the mounts and environment, add `-p 127.0.0.1:8080:8080` before the image name, and omit the trailing `config test`.
@@ -105,7 +105,7 @@ Run `japka config test` with the same working directory, environment, and files 
 
 ### Apple containers
 
-On Apple silicon, Apple’s `container` can run the same GHCR image. Start the runtime with `container system start`, then use `container run --rm -p 127.0.0.1:8080:8080 ghcr.io/dperox/japka:latest`.
+On Apple silicon, Apple’s `container` can run the same GHCR image. Start the runtime with `container system start`, then use `container run --rm -p 127.0.0.1:8080:8080 ghcr.io/japka-rs/japka:latest`.
 
 ### Native Windows
 
