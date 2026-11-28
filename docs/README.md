@@ -4,22 +4,28 @@ Japka serves static websites, forwards HTTP requests to your applications, and b
 
 ## Get running
 
-Let your AI help you set up Japka. Copy this prompt into your AI assistant.
+Let your AI help you set up and configure Japka. Copy this prompt into your AI assistant.
 
 ```text
-Help me set up Japka. Ask where I want to run it (Cargo, Docker, or Kubernetes),
-what files or application I want to serve, and what URL should reach it.
-Use the official guide at https://github.com/dperox/japka/blob/main/docs/deployment.md.
+Help me configure Japka for a new or existing deployment. Ask where it will
+run, which hostnames and paths should serve files or forward requests, and
+which directories or backends to use.
 
-Prepare the simplest setup that fits my answers. Use the target Japka binary’s
-help and config schema to check which settings it accepts. If I already run
-Japka, inspect the effective configuration, preserve my existing routes, and
-use japka config plan to show what your proposed file would change.
+Use the configuration guide to prepare a change I can review.
+https://github.com/dperox/japka/blob/main/docs/config-review.md
+For installation with Cargo, Docker, or Kubernetes, use the deployment guide.
+https://github.com/dperox/japka/blob/main/docs/deployment.md
 
-Validate the proposal with japka config test using the intended environment
-and mounts. Show me the configuration, the commands to deploy it, and a curl
-request with the response I should expect. Tell me which checks you ran.
-Wait for my approval before applying the configuration or starting the service.
+Use japka config list --json for startup settings and japka config schema
+for the JSON file. For an existing service, run japka config show --json in
+its environment and preserve unrelated settings and inherited routes.
+
+Draft a separate candidate file. Point JAPKA_CONFIG at it for japka config test
+using the service’s working directory, environment, and mounts. If there is an
+active file, run japka config plan BASE CANDIDATE --json with both file paths.
+Show me what changes, which settings need a reload or restart, and a curl
+request with the expected response. Wait for my approval before applying the
+configuration or starting the service.
 ```
 
 | Where are you running Japka? | Start here |
