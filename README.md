@@ -4,6 +4,7 @@ Japka is a web server, reverse proxy, and load balancer written in Rust. It can 
 
 - **Routing and protocols.** Route by hostname and path, serve HTTPS over HTTP/2 or HTTP/3, and proxy WebSocket connections.
 - **Health checks and reloads.** Send traffic to healthy backends and update routes and certificates on Unix while existing requests finish.
+- **Memory safety.** Rust’s ownership and borrowing rules prevent use-after-free bugs and data races in safe Rust code. Japka compiles to a native binary and runs without a garbage collector.
 - **AI-assisted configuration.** An agent can validate a proposed change and show you its effect before deployment. [Configuration review](docs/config-review.md)
 
 ## Install with Cargo
@@ -28,6 +29,17 @@ docker run --rm -p 127.0.0.1:8080:8080 ghcr.io/dperox/japka:latest
 
 Open <http://127.0.0.1:8080/> for the bundled site. [Docker deployment](docs/deployment.md#docker) · [Apple containers](docs/deployment.md#apple-containers)
 
+## Performance on an M4 Mac mini
+
+For 4 KiB responses, Japka served static files faster in both deployments, while NGINX handled more proxied requests. The table shows median requests per second over three rounds with 64 persistent HTTP/1.1 connections.
+
+| 4 KiB workload | Japka native | NGINX native | Japka in Apple container | NGINX in Apple container |
+| --- | ---: | ---: | ---: | ---: |
+| Static file | 159,861 | 49,287 | 69,395 | 64,308 |
+| Reverse proxy | 68,538 | 78,492 | 46,233 | 51,604 |
+
+With 256 KiB proxy responses, Japka handled more requests per second in both deployments. The full report includes p95 latency, server settings, and reproduction steps. [Mac mini benchmark](bench/README.md)
+
 ## Review an agent’s configuration change
 
 Compare the active configuration with the agent’s proposal before approving it.
@@ -42,4 +54,4 @@ When an agent proposes adding a route, the plan shows its host, path prefix, and
 
 Translate an `nginx -T` dump into a candidate configuration, review the reported differences, and compare responses before switching traffic. [NGINX migration guide](docs/migration.md)
 
-[Routing examples](docs/routing.md) · [Feature guide](docs/features.md) · [Mac mini benchmarks against NGINX](bench/README.md) · [Logo and icon](docs/brand.md) · [Contributing](AGENTS.md) · [MIT license](LICENSE)
+[Routing examples](docs/routing.md) · [Feature guide](docs/features.md) · [Logo and icon](docs/brand.md) · [Contributing](AGENTS.md) · [MIT license](LICENSE)
