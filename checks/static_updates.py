@@ -1,11 +1,63 @@
 """Check file freshness and conditional responses during concurrent static requests."""
 from concurrent.futures import ThreadPoolExecutor
+from email.utils import formatdate
 from http.client import HTTPConnection
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from routing import JAPKA, launch
+
+
+def check_conditional_ranges(settings, root, fixed_time):
+    data = bytes(range(256))
+    path = root / "bytes.bin"
+    path.write_bytes(data)
+    os.utime(path, (fixed_time, fixed_time))
+    etag = f'"{fixed_time:x}-{len(data):x}"'
+    current = formatdate(fixed_time, usegmt=True)
+    older = formatdate(fixed_time - 1, usegmt=True)
+    partial = ("Range", "bytes=0-3")
+    unsatisfiable = ("Range", "bytes=256-")
+    cases = [
+        ("GET", (partial, ("If-Range", etag)), 206, data[:4], "bytes 0-3/256"),
+        ("GET", (partial, ("If-Range", current)), 206, data[:4], "bytes 0-3/256"),
+        ("GET", (partial, ("If-Range", '"old"')), 200, data, None),
+        ("GET", (partial, ("If-Range", "W/" + etag)), 200, data, None),
+        ("GET", (unsatisfiable, ("If-Range", older)), 200, data, None),
+        ("HEAD", (partial, ("If-Range", older)), 200, b"", None),
+        ("GET", (unsatisfiable, ("If-Match", '"old"')), 412, None, None),
+        ("GET", (unsatisfiable, ("If-None-Match", "*"), ("If-Range", older)), 304, b"", None),
+    ]
+    for header, value in (
+        ("If-Match", etag),
+        ("If-None-Match", etag),
+        ("If-Modified-Since", current),
+        ("If-Unmodified-Since", current),
+        ("If-Range", etag),
+    ):
+        cases.append(("GET", (partial, (header, value), (header.lower(), value)), 400, None, None))
+
+    for sendfile in ("0", "1"):
+        with launch([JAPKA], dict(settings, JAPKA_SENDFILE=sendfile)) as port:
+            for method, headers, status, body, content_range in cases:
+                connection = HTTPConnection("127.0.0.1", port, timeout=5)
+                try:
+                    connection.putrequest(method, "/bytes.bin")
+                    for name, value in headers:
+                        connection.putheader(name, value)
+                    connection.endheaders()
+                    response = connection.getresponse()
+                    actual = response.read()
+                    context = (sendfile, method, headers)
+                    assert response.status == status, (context, response.status)
+                    assert response.getheader("Content-Range") == content_range, context
+                    if body is not None:
+                        assert actual == body, (context, len(actual))
+                    if method == "HEAD":
+                        assert response.getheader("Content-Length") == str(len(data)), context
+                finally:
+                    connection.close()
 
 
 def main():
@@ -57,7 +109,9 @@ def main():
                 list(clients.map(request, cases * 16))
             index.unlink()
             list(clients.map(request, [("GET", "/docs/", {}, 404, None)] * 16))
+        check_conditional_ranges(settings, root, fixed_time)
     print("Concurrent GET, HEAD, validators and ranges stayed current across index replacements and removal.")
+    print("Conditional ranges, precondition precedence and duplicate headers passed with sendfile enabled and disabled.")
 
 
 if __name__ == "__main__":

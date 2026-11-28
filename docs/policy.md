@@ -26,13 +26,6 @@ The cache retains up to 256 entries, evicting the oldest when full, and buffers 
 
 When coalescing is enabled, up to 16 distinct cache keys can have an active fill. Followers wait at most two seconds and check the cache again. If the response is private, the leader disconnects, the entry is invalidated, or the wait expires without a valid cached response, each follower can fetch independently. Only a complete, publicly cacheable response is shared. A request for a distinct key proceeds independently.
 
-## Verify HTTP policies
-
-    cargo build --locked
-    python3 checks/policy.py
-
-The socket checks cover cache hits, expiry, request and response bypasses, write invalidation, gzip and range behavior, per-peer rate limits, and IP rules.
-
 ## Access logging
 
 Start Japka with `JAPKA_ACCESS_LOG=1` to write one JSON record to stderr when the HTTP handler returns response headers. The default is off. Select records with `event` equal to `access` to distinguish them from startup and reload messages.

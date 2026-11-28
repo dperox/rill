@@ -28,11 +28,11 @@ def require(condition, message):
 @contextmanager
 def staged(target, data):
     # Stage in the target directory so relative paths and atomic rename match service behavior.
-    with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".japka-", delete=False) as f:
-        path = Path(f.name)
+    f = tempfile.NamedTemporaryFile(dir=target.parent, prefix=".japka-", delete=False)
+    path = Path(f.name)
     try:
-        info = target.stat()
-        with path.open("wb") as f:
+        with f:
+            info = target.stat()
             f.write(data)
             f.flush()
             staged_info = os.fstat(f.fileno())
@@ -74,10 +74,11 @@ def reload_and_wait(log, identity, digest):
 
 
 def restore(target, backup, log, identity, plan):
-    require(sha(backup.read_bytes()) == plan["baseline_sha256"], "Rollback file differs from reviewed baseline")
+    baseline = backup.read_bytes()
+    require(sha(baseline) == plan["baseline_sha256"], "Rollback file differs from reviewed baseline")
     require(sha(target.read_bytes()) in (plan["baseline_sha256"], plan["candidate_sha256"]),
             "Target was changed by another writer; rollback file retained")
-    with staged(target, backup.read_bytes()) as original:
+    with staged(target, baseline) as original:
         os.replace(original, target)
     reload_and_wait(log, identity, plan["baseline_sha256"])
     backup.unlink()

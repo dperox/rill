@@ -272,14 +272,14 @@ async fn serve_h3(conn: quinn::Connection, app: Router) -> Result<(), h3::error:
         // Read remote_address() per request so QUIC connection migration cannot
         // bypass ALLOW_IPS, DENY_IPS, RATE_LIMIT, or accurate access logging.
         let peer = conn.remote_address();
-        let app = app
-            .clone()
-            .layer(axum::Extension(ConnectInfo(peer)))
-            .layer(axum::Extension(NegotiatedSni(sni.clone())));
+        let app = app.clone();
+        let sni = NegotiatedSni(sni.clone());
         tokio::spawn(async move {
-            let Ok((request, stream)) = resolver.resolve_request().await else {
+            let Ok((mut request, stream)) = resolver.resolve_request().await else {
                 return;
             };
+            request.extensions_mut().insert(ConnectInfo(peer));
+            request.extensions_mut().insert(sni);
             if let Err(error) = h3_request(request, stream, app).await {
                 eprintln!("HTTP/3 stream: {error}");
             }
@@ -347,7 +347,7 @@ async fn h3_request(
                 };
                 fn body<S>(frames: S) -> Body
                 where
-                    S: futures_core::Stream<
+                    S: futures_util::Stream<
                             Item = Result<hyper::body::Frame<Bytes>, h3::error::StreamError>,
                         > + Send
                         + 'static,

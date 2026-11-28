@@ -22,7 +22,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: japka
-          image: japka:local
+          image: ghcr.io/japka-rs/japka:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: LISTEN
