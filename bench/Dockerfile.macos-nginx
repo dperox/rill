@@ -1,5 +1,6 @@
-FROM ghcr.io/dperox/japka:latest AS japka
-FROM nginx:1.31.10
+ARG JAPKA_IMAGE=ghcr.io/dperox/japka@sha256:70c21786d944891aabd3c677741fe34dfd5a6c6fbd95e9966e3d85344787e8dd
+FROM ${JAPKA_IMAGE} AS japka
+FROM nginx:1.31.10@sha256:a786635fd3c7b9a57ea089ab1c0713e510f3b548b65fe699ce3d59e4a926b37e
 COPY --from=japka /usr/local/bin/japka /usr/local/bin/japka
 ENV LISTEN=0.0.0.0:8080
 USER 10001:10001

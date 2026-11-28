@@ -51,7 +51,7 @@ container run --rm japka:local config test
 container run --rm -p 127.0.0.1:8080:8080 japka:local
 ```
 
-Use the same curl request from the Mac. A read-only site mount uses `-v "$PWD/site:/app/public:ro"`. For HTTP/3, configure TLS and publish the TLS port over both TCP and UDP. The macOS 27.2.1 check with Apple container 1.2.0 verified HTTP/1.1, HTTP/2, HTTP/3, and full and range reads from a mounted site. [TLS settings](edge.md) · [Mac benchmarks](../bench/macos.md)
+Use the same curl request from the Mac. A read-only site mount uses `-v "$PWD/site:/app/public:ro"`. For HTTP/3, configure TLS and publish the TLS port over both TCP and UDP. The macOS 27.2.1 check with Apple container 1.2.0 verified HTTP/1.1, HTTP/2, HTTP/3, and full and range reads from a mounted site. [TLS settings](edge.md) · [Mac mini benchmarks](../bench/README.md)
 
 ## Native Windows
 

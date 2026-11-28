@@ -1,6 +1,6 @@
-"""Benchmark native Japka and Apple's container runtime from the same Mac."""
+"""Compare Japka and NGINX on macOS and in Apple containers from the same Mac."""
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import csv
 import os
 from pathlib import Path
@@ -10,7 +10,60 @@ import sys
 import tempfile
 from uuid import uuid4
 
-from compare import PATTERN, REPO, process, validation_script
+REPO = Path(__file__).resolve().parent.parent
+PATTERN = b"0123456789abcdef"
+LUA_CHECKS = """
+local threads = {}
+validated = 0
+invalid = 0
+
+function setup(thread)
+    table.insert(threads, thread)
+end
+
+function response(status, headers, body)
+    validated = validated + 1
+    if status ~= 200 or body ~= expected then
+        invalid = invalid + 1
+    end
+end
+
+function done(summary, latency, requests)
+    local checked, wrong, errors = 0, 0, 0
+    for _, thread in ipairs(threads) do
+        checked = checked + thread:get("validated")
+        wrong = wrong + thread:get("invalid")
+    end
+    for _, count in pairs(summary.errors) do
+        errors = errors + count
+    end
+    print(string.format("RESULT %d %d %d %d %.2f %.0f %.3f",
+        summary.requests, checked, wrong, errors,
+        summary.requests * 1000000 / summary.duration, latency:percentile(95),
+        summary.duration / 1000000))
+end
+"""
+
+
+def validation_script(size):
+    repeats, tail = divmod(size, len(PATTERN))
+    expected = f'string.rep("{PATTERN.decode()}", {repeats}) .. "{PATTERN[:tail].decode()}"'
+    return f"local expected = {expected}\n" + LUA_CHECKS
+
+
+@contextmanager
+def process(command, **kwargs):
+    proc = subprocess.Popen(command, **kwargs)
+    try:
+        yield proc
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
 
 
 def sample(wrk, script, port, path, seconds):
@@ -59,25 +112,23 @@ http {{
 """
 
 
-def start_container(running, site, image, port, frontend, origin="japka", fixed_upstream=False):
+def start_container(running, site, image, port, frontend):
     name = f"japka-bench-{uuid4().hex[:10]}"
     # Read warm guest files and proxy over guest loopback for both servers.
-    startup = f"""
+    startup = """
 set -eu
 cp -R /fixtures /tmp/site
-LISTEN=127.0.0.1:9000 DOCUMENT_ROOT=/tmp/site/origin {origin} &
+LISTEN=127.0.0.1:9000 DOCUMENT_ROOT=/tmp/site/origin japka &
 """
     if frontend == "nginx":
         startup += 'exec nginx -p /tmp/ -c /tmp/site/nginx.conf -e stderr'
     else:
         startup += 'export UPSTREAMS=127.0.0.1:9000 DOCUMENT_ROOT=/tmp/site/front; '
-        if fixed_upstream:
-            startup += 'export JAPKA_FIXED_UPSTREAM=1 RILL_FIXED_UPSTREAM=1; '
-        startup += f'exec {frontend}'
+        startup += 'exec japka'
     subprocess.run(
         ["container", "run", "-d", "--rm", "--name", name, "--cpus", "2", "--memory", "1G",
          "-p", f"127.0.0.1:{port}:8080", "-v", f"{site}:/fixtures:ro",
-         "-e", "LISTEN=0.0.0.0:8080", "-e", "TOKIO_WORKER_THREADS=1", "-e", "JAPKA_BLOCKING_THREADS=1", "-e", "RILL_BLOCKING_THREADS=1",
+         "-e", "LISTEN=0.0.0.0:8080", "-e", "TOKIO_WORKER_THREADS=1", "-e", "JAPKA_BLOCKING_THREADS=1",
          "--entrypoint", "/bin/sh", image, "-c", startup],
         check=True, stdout=sys.stderr,
     )
@@ -86,17 +137,14 @@ LISTEN=127.0.0.1:9000 DOCUMENT_ROOT=/tmp/site/origin {origin} &
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--japka", "--rill", type=Path, default=REPO / "target/release/japka")
-    parser.add_argument("--image", default="japka:local")
+    parser.add_argument("--japka", type=Path, default=REPO / "target/release/japka")
+    parser.add_argument("--image", default="japka-nginx:mac-bench")
     parser.add_argument("--wrk", default="wrk")
-    parser.add_argument("--nginx", help="also benchmark this native NGINX binary; --image must contain nginx and japka")
-    parser.add_argument("--baseline-japka", "--baseline-rill", type=Path, help="add a native baseline and use japka-base from the same image for all guest origins and the baseline frontend")
-    parser.add_argument("--fixed-upstream", action="store_true", help="enable JAPKA_FIXED_UPSTREAM only on the candidate frontends")
-    parser.add_argument("--workload", choices=("all", "proxy", "static"), default="all")
+    parser.add_argument("--nginx", default="nginx", help="native NGINX executable")
     parser.add_argument("--rounds", type=int, default=3)
     args = parser.parse_args()
-    if args.rounds < 1 or (args.baseline_japka and not args.nginx):
-        parser.error("--rounds must be positive and --baseline-japka requires --nginx")
+    if args.rounds < 1:
+        parser.error("--rounds must be positive")
     with tempfile.TemporaryDirectory() as directory, ExitStack() as running:
         root = Path(directory)
         site = root / "site"
@@ -110,52 +158,33 @@ def main():
             (root / f"{size}.lua").write_text(validation_script(size))
 
         with ExitStack() as reservations:
-            sockets = [reservations.enter_context(socket.socket()) for _ in range(7 if args.baseline_japka else 5)]
+            sockets = [reservations.enter_context(socket.socket()) for _ in range(5)]
             for sock in sockets:
                 sock.bind(("127.0.0.1", 0))
-            native, origin, published, native_nginx, published_nginx, *baseline_ports = [sock.getsockname()[1] for sock in sockets]
+            native, origin, published, native_nginx, published_nginx = [sock.getsockname()[1] for sock in sockets]
 
-        workers = {"TOKIO_WORKER_THREADS": "1", "JAPKA_BLOCKING_THREADS": "1", "RILL_BLOCKING_THREADS": "1"}
-        baseline = (args.baseline_japka or args.japka).resolve()
-        upstream = {"UPSTREAMS": f"127.0.0.1:{origin}"}
-        candidate_settings = dict(upstream, JAPKA_FIXED_UPSTREAM="1", RILL_FIXED_UPSTREAM="1") if args.fixed_upstream else upstream
-        processes = [(baseline, origin, "origin", {}), (args.japka.resolve(), native, "front", candidate_settings)]
-        if args.baseline_japka:
-            processes.append((baseline, baseline_ports[0], "front", upstream))
-        for binary, port, folder, settings in processes:
+        binary = str(args.japka.resolve())
+        workers = {"TOKIO_WORKER_THREADS": "1", "JAPKA_BLOCKING_THREADS": "1"}
+        for port, folder, settings in [(origin, "origin", {}), (native, "front", {"UPSTREAMS": f"127.0.0.1:{origin}"})]:
             running.enter_context(process(
-                [str(binary)],
-                env=dict(PATH=os.environ["PATH"], LISTEN=f"127.0.0.1:{port}",
-                         DOCUMENT_ROOT=str(site / folder), **workers, **settings),
+                [binary], env=dict(PATH=os.environ["PATH"], LISTEN=f"127.0.0.1:{port}",
+                                   DOCUMENT_ROOT=str(site / folder), **workers, **settings),
             ))
-
-        guest_origin = "japka-base" if args.baseline_japka else "japka"
-        start_container(running, site, args.image, published, "japka", guest_origin, args.fixed_upstream)
-        servers = [("native", native), ("apple-container", published)]
-        if args.nginx:
-            config = root / "nginx.conf"
-            config.write_text(nginx_config(f"127.0.0.1:{native_nginx}", f"127.0.0.1:{origin}", site / "front"))
-            running.enter_context(process([args.nginx, "-p", f"{root}/", "-c", str(config), "-e", "stderr"]))
-            (site / "nginx.conf").write_text(nginx_config("0.0.0.0:8080", "127.0.0.1:9000", "/tmp/site/front"))
-            start_container(running, site, args.image, published_nginx, "nginx", guest_origin)
-            servers = [("japka-native", native), ("nginx-native", native_nginx),
-                       ("japka-container", published), ("nginx-container", published_nginx)]
-        if args.baseline_japka:
-            start_container(running, site, args.image, baseline_ports[1], "japka-base", guest_origin)
-            servers += [("baseline-native", baseline_ports[0]), ("baseline-container", baseline_ports[1])]
+        config = root / "nginx.conf"
+        config.write_text(nginx_config(f"127.0.0.1:{native_nginx}", f"127.0.0.1:{origin}", site / "front"))
+        running.enter_context(process([args.nginx, "-p", f"{root}/", "-c", str(config), "-e", "stderr"]))
+        (site / "nginx.conf").write_text(nginx_config("0.0.0.0:8080", "127.0.0.1:9000", "/tmp/site/front"))
+        start_container(running, site, args.image, published, "japka")
+        start_container(running, site, args.image, published_nginx, "nginx")
+        servers = [("japka-native", native), ("nginx-native", native_nginx),
+                   ("japka-container", published), ("nginx-container", published_nginx)]
         writer = csv.writer(sys.stdout, lineterminator="\n")
         writer.writerow(["workload", "bytes", "server", "round", "requests_per_s", "p95_ms", "checked"])
         for size in sizes:
             script = root / f"{size}.lua"
             for workload, path in [("static", f"/{size}.bin"), ("proxy", f"/api/{size}.bin?bench=1")]:
-                if args.workload not in ("all", workload):
-                    continue
                 for round_number in range(1, args.rounds + 1):
                     order = servers if round_number % 2 else servers[::-1]
-                    if args.baseline_japka:
-                        # Each frontend occupies each timing slot once over six rounds.
-                        offset = (round_number - 1) % len(servers)
-                        order = servers[offset:] + servers[:offset]
                     for server, port in order:
                         sample(args.wrk, script, port, path, 2)
                         row = sample(args.wrk, script, port, path, 5)

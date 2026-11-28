@@ -42,4 +42,4 @@ When an agent proposes adding a route, the plan shows its host, path prefix, and
 
 Translate an `nginx -T` dump into a candidate configuration, review the reported differences, and compare responses before switching traffic. [NGINX migration guide](docs/migration.md)
 
-[Routing examples](docs/routing.md) · [Feature guide](docs/features.md) · [Benchmarks](bench/README.md) · [Logo and icon](docs/brand.md) · [Contributing](AGENTS.md) · [MIT license](LICENSE)
+[Routing examples](docs/routing.md) · [Feature guide](docs/features.md) · [Mac mini benchmarks against NGINX](bench/README.md) · [Logo and icon](docs/brand.md) · [Contributing](AGENTS.md) · [MIT license](LICENSE)

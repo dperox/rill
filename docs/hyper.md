@@ -11,8 +11,7 @@ A complete small GET or HEAD uses the published HTTP/1 parser and response
 encoder. The connection waits for the next request with a small receive buffer.
 Partial heads, request bodies and upgrades pass their original bytes to
 http-kit’s streaming connection driver. That driver handles subsequent requests
-on the same socket and retains its own connection state. The low idle-RSS
-measurement applies to connections using the compact path.
+on the same socket and retains its own connection state.
 
 Both drivers route each request through the same Axum application. An eligible
 static response carries an open file region. Headers precede the transfer,
@@ -35,7 +34,7 @@ and workload.
 
 | CPU allocation and workload | Network workers | Maximum blocking workers |
 |---|---:|---:|
-| Two CPUs of quota shared across a wider set of CPUs, as in the ingress lab | 1 | 2 |
+| Two CPUs of quota shared across a wider set of CPUs | 1 | 2 |
 | Pinned to two CPUs, serving files or proxying requests | 2 | 2 |
 | Three or four CPUs, serving files without upstream routes or a reloadable config file | One per available CPU | One per network worker |
 | Four CPUs, with upstream routes or a reloadable config file | 4 | 1 |
@@ -52,7 +51,5 @@ I/O workers need a blocking budget of at least one per network worker.
 Larger proxies and file-configured servers with more than two workers use
 the shared scheduler, which lets a reload add upstream routes. Japka reports
 both worker counts in its startup log.
-[Default-setting benchmarks](../bench/kubernetes/README.md#automatic-worker-defaults)
-and [native multicore measurements](../bench/http-kit-static.md#linux-worker-scheduling-after-v010).
 
 [Transport dependencies](crates.md) · [Static file settings](static-io.md)

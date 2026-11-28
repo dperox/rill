@@ -7,6 +7,6 @@ Trace the affected data path before editing. src/plain.rs owns the plaintext soc
 
 For an HTTP/1 upgrade, verify hop-by-hop headers on both hops, preservation of buffered bytes and backpressure, and lease lifetime through tunnel closure. Exercise ws and wss with checks/websocket.py. For reload-sensitive changes, run checks/reload.py while an old request is in flight.
 
-For file I/O or buffer changes, run checks/sendfile.py and checks/http1_buffers.py. Replay checks/compare.py with JAPKA_SENDFILE=0 and 1. For memory claims use bench/connections.py; for throughput use the matching workload in bench/README.md.
+For file I/O or buffer changes, run checks/sendfile.py and checks/http1_buffers.py. Replay checks/compare.py with JAPKA_SENDFILE=0 and 1. For throughput and latency on the Mac mini, use the workloads in bench/README.md.
 
 For driver changes, follow docs/hyper.md, exercise checks/shared_listener.py and verify the registry dependency lockfile. Keep notices/HYPER-LICENSE in the container.

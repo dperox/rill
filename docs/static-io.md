@@ -33,7 +33,6 @@ Use `JAPKA_SENDFILE=0` when cold or remote storage could stall a network
 worker that also serves latency-sensitive requests. A sendfile call can wait
 for source pages even with a nonblocking socket. TLS, HTTP/2, HTTP/3, byte
 ranges, encoded paths and `COMPRESS=1` use buffered file delivery.
-[Japka sendfile behavior and benchmark](../bench/sendfile.md)
 
 For uncached files, atomic replacement updates the path for subsequent requests. A transfer
 that has already opened the file continues to read the original inode.
@@ -45,7 +44,7 @@ place.
 
 Native Windows uses Winsock TransmitFile by default for eligible plaintext HTTP/1 GET responses larger than 64 KiB. Set `JAPKA_SENDFILE=0` before startup to use buffered delivery. The dispatcher flushes the response headers before starting the transfer and waits for the advertised byte count before processing the next response on that connection.
 
-Japka reserves at most two direct transfers per process. Additional downloads immediately take the buffered path. Two dedicated completion workers keep slow transfers off the Tokio network and filesystem pools. A reset or short transfer ends that response. HEAD, byte ranges, TLS, and gzip keep their existing handling. The immutable asset cache is Linux-only. See the [Windows benchmarks](../bench/windows.md).
+Japka reserves at most two direct transfers per process. Additional downloads immediately take the buffered path. Two dedicated completion workers keep slow transfers off the Tokio network and filesystem pools. A reset or short transfer ends that response. HEAD, byte ranges, TLS, and gzip keep their existing handling. The immutable asset cache is Linux-only.
 
 ## Immutable assets
 
@@ -69,4 +68,3 @@ filesystem tasks and DNS lookups. It accepts a positive integer from 1 to
 scheduler selects up to four blocking workers automatically for the CPU
 allocations and workloads described in the worker scheduling guide. A larger pool can handle more concurrent slow
 operations and use more memory. [Worker scheduling](hyper.md#linux-http-worker-scheduling)
-and [benchmark guide](../bench/README.md).

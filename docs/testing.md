@@ -61,7 +61,7 @@ python3 checks/sendfile.py
 python3 checks/asset_cache.py
 ```
 
-These checks start loopback listeners and use temporary fixtures. The stream check exercises TCP, UDP and mail backends. See the [TLS guide](edge.md) for the separate HTTPS and QUIC check and the [benchmark guide](../bench/README.md) for throughput and idle-memory comparisons.
+These checks start loopback listeners and use temporary fixtures. The stream check exercises TCP, UDP and mail backends. See the [TLS guide](edge.md) for the separate HTTPS and QUIC check and the [Mac mini benchmark](../bench/README.md) for native and container throughput and latency.
 
 ## Native Windows file delivery
 
