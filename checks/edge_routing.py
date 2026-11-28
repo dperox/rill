@@ -17,7 +17,7 @@ from routing import Origin, JAPKA
 
 def certificate(root, label, dns):
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-                    "-subj", f"/CN={dns}", "-addext", f"subjectAltName=DNS:{dns}",
+                    "-subj", f"/CN={dns}/O={label}", "-addext", f"subjectAltName=DNS:{dns}",
                     "-keyout", str(root / f"{label}.key"), "-out", str(root / f"{label}.pem")],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     return {"cert": f"{label}.pem", "key": f"{label}.key"}

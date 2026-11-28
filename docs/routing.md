@@ -21,8 +21,6 @@ Bare upstream addresses and `http://` URLs use plaintext HTTP/1.1 and receive `H
 - **No built-in authentication or request body size limit**: Enforce authentication and upload size limits at the backend or an upstream gateway.
 - **Host validation**: Duplicate `Host` headers, `@` userinfo in `Host` or URI authority, and mismatched URI authority vs. `Host` headers are rejected with HTTP 400.
 
-`python3 checks/routing.py` checks host and path-prefix selection and verifies that new requests reach the less busy backend while another request is in flight.
-
 ## Upstream HTTPS and mutual TLS
 
 Set an HTTPS URL in either upstream list. For example, `UPSTREAMS=https://orders.internal:8443` verifies the server certificate against the system trust store and the hostname in the URL. Set `JAPKA_UPSTREAM_CA` to a PEM bundle to use a private trust store instead. Set both `JAPKA_UPSTREAM_CERT` and `JAPKA_UPSTREAM_KEY` to present a client certificate chain and matching private key. These settings apply to every HTTPS upstream in the process. Use separate processes for backends requiring different client identities. Mount private keys as read-only secrets. When Japka rebuilds HTTPS pools during a [graceful reload](reload.md), it rereads upstream trust and client certificate files from their configured paths.
@@ -48,8 +46,6 @@ Each eligible pool reserves 48 idle connections for these GETs and 16 for other 
 HTTP/1.1 WebSocket requests use the same host and path rules, access policies and upstream selection as other proxy requests. Clients can connect with `ws://` on the plain listener or `wss://` on the TLS listener. Configure the upstream as a bare address, an `http://` URL or an `https://` URL. The upstream receives the WebSocket handshake over HTTP/1.1, and Japka relays traffic in both directions after a successful upgrade. Upgrade requests bypass the response cache. Least-connections balancing counts an upgraded connection for the lifetime of the tunnel. An established tunnel keeps its upstream through a configuration reload.
 
 For example, start Japka with `UPSTREAMS=127.0.0.1:9001` when a WebSocket application serves `/api/live` on port 9001. A browser can then open `new WebSocket("ws://127.0.0.1:8080/api/live")`. Use `wss://` with a trusted certificate for an HTTPS site.
-
-Run `python3 checks/websocket.py` to check plain and TLS upgrades, handshake validation, and tunnel behavior across a reload.
 
 ## Reloadable HTTP pool settings
 

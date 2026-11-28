@@ -21,32 +21,20 @@ Add exact DNS names to `tls.hosts` in the reload file. Each certificate must cov
 
 TCP TLS and QUIC select the chain during the handshake using SNI. HTTP Host routing then selects the application or static site. The default chain remains required. On Unix, SIGHUP publishes the entire certificate set with routes and site roots. Duplicate names, invalid named certificates or mismatched keys reject the candidate.
 
-## Local protocol check
+## Verify HTTPS protocols
 
-From the repository root, generate a temporary localhost certificate and start Japka.
-
-```sh
-cargo build --release --locked
-dir=$(mktemp -d)
-openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost \
-  -addext subjectAltName=DNS:localhost -keyout "$dir/key.pem" -out "$dir/cert.pem"
-TLS_LISTEN=127.0.0.1:8443 TLS_CERT="$dir/cert.pem" TLS_KEY="$dir/key.pem" \
-  UPSTREAMS=127.0.0.1:19092 target/release/japka &
-pid=$!
-```
-
-Run the check in the same shell so `$dir` and `$pid` refer to the certificate and server above. It requires Python 3.11+, aioquic, curl_cffi, and a `curl` executable whose `curl --version` output lists `HTTP2`.
+With a client that supports each protocol, request a known page on your HTTPS listener.
+Use its configured hostname so curl verifies the certificate and sends the correct SNI.
+For a private certificate authority, add `--cacert /path/to/ca.pem`.
 
 ```sh
-python3 -m venv "$dir/venv"
-"$dir/venv/bin/pip" install aioquic curl_cffi
-"$dir/venv/bin/python" checks/edge.py --ca "$dir/cert.pem" --port 8443 --echo-port 19092
-kill "$pid"
+curl --http2 --fail --silent --show-error --output /dev/null \
+  --write-out '%{http_code} HTTP/%{http_version}\n' https://app.example/
+curl --http3-only --fail --silent --show-error --output /dev/null \
+  --write-out '%{http_code} HTTP/%{http_version}\n' https://app.example/
 ```
 
-The check verifies the certificate, negotiated TCP protocols and response bytes. An independent QUIC client retrieves the same file on two concurrent HTTP/3 streams. The echo check sends a 256 KiB POST through HTTP/3, verifies the upstream path, query, HTTP/1.1 version and response body, and checks removal of connection-specific response headers.
-
-The framing checks use curl_cffi with HTTP/2 and HTTP/3 and reuse connections across HEAD, missing-file, conditional and range requests. With the echo backend enabled, they also check proxied HEAD and 204 responses.
+A successful page request prints `200 HTTP/2` or `200 HTTP/3` respectively.
 
 ## Kubernetes TLS and HTTP/3
 

@@ -73,7 +73,7 @@ jobs:
             (cd "$stage" && ./japka config test && [[ "$(./japka --version)" == "japka $version" ]])
             tar -C dist -czf "dist/japka-$version-linux-amd64.tar.gz" japka
             cp "target/package/japka-$version.crate" dist/
-            sed 's|image: japka:local|image: ghcr.io/japka-rs/japka:latest|' deploy/kubernetes.yaml > dist/kubernetes.yaml
+            cp deploy/kubernetes.yaml dist/
           fi
           rm -r "$stage"
           (cd dist && for file in *; do sha256sum "$file" > "$file.sha256"; done)

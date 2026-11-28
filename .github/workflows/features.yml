@@ -32,7 +32,15 @@ jobs:
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --locked
       - name: Run feature acceptance checks
-        run: ./checks/features.sh
+        run: |
+          cargo build --locked
+          python3 checks/reload.py
+          python3 checks/shared_listener.py
+          python3 checks/websocket.py
+          python3 checks/sites.py
+          python3 checks/edge_routing.py
+          python3 checks/migration.py
+          python3 checks/config_review.py
       - name: Check routing, static I/O, streams, policies and security regressions
         run: |
           python3 checks/routing.py

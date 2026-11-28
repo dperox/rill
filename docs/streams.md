@@ -45,15 +45,6 @@ japka
 The upstream sends its normal greeting and handles commands, authentication, and
 any TLS handshake or upgrade. Japka selects the backend when the TCP connection opens. The backend handles mail authentication.
 
-Run the integration checks to launch local mock mail backends and exercise IMAP
-`NOOP`, POP3 `NOOP`, and SMTP `EHLO`, plus TCP load balancing, TCP half-closes,
-and UDP session affinity and datagram boundaries.
-
-```sh
-cargo build --locked
-python3 checks/streams.py target/debug/japka
-```
-
 ## Kubernetes
 
 Start with the [HTTP Deployment and Service](deployment.md#kubernetes). Keep `namespace` set to the namespace where you deployed Japka. Use your backend Services’ ClusterIPs as the numeric upstream addresses in the example below.

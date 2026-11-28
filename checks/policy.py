@@ -1,20 +1,18 @@
 """Exercise HTTP policy behavior over real sockets. Run after cargo build --locked."""
 
 from collections import Counter
-from contextlib import contextmanager
 import gzip
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
 import socket
-import subprocess
 import tempfile
 from threading import Thread
 import time
 
-REPO = Path(__file__).resolve().parents[1]
-BINARY = Path(os.environ.get("JAPKA", os.environ.get("RILL", REPO / "target/debug/japka"))).resolve()
+from routing import JAPKA, launch
+
 POLICY = {"ALLOW_IPS", "DENY_IPS", "RATE_LIMIT", "COMPRESS", "CACHE_TTL"}
 PLAIN = b"compressible body\n" * 256
 
@@ -63,33 +61,10 @@ def request(port, path="/", method="GET", headers=None, host="127.0.0.1"):
     return result
 
 
-@contextmanager
 def running(root, backend, **settings):
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
     env = {key: value for key, value in os.environ.items() if key not in POLICY}
-    env.update(LISTEN=f"127.0.0.1:{port}", DOCUMENT_ROOT=str(root),
-               UPSTREAMS=f"127.0.0.1:{backend.server_port}", **settings)
-    log_path = Path(root) / ".japka-policy-stderr.log"
-    with log_path.open("wb") as err_file, subprocess.Popen([BINARY], cwd=REPO, env=env, stderr=err_file) as process:
-        try:
-            deadline = time.monotonic() + 5
-            while True:
-                if process.poll() is not None:
-                    raise RuntimeError(log_path.read_text(errors="replace"))
-                try:
-                    with socket.create_connection(("127.0.0.1", port), timeout=0.1):
-                        break
-                except ConnectionRefusedError:
-                    if time.monotonic() >= deadline:
-                        raise
-                    time.sleep(0.01)
-            yield port
-        finally:
-            if process.poll() is None:
-                process.terminate()
-                process.wait(timeout=5)
+    env.update(DOCUMENT_ROOT=str(root), UPSTREAMS=f"127.0.0.1:{backend.server_port}", **settings)
+    return launch([JAPKA], env)
 
 
 def cache_checks(root, backend):

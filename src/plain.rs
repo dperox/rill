@@ -1,26 +1,20 @@
 //! Plaintext HTTP/1 with ordered file regions and prior-knowledge HTTP/2 selection.
 use crate::PlainApp;
 use axum::extract::ConnectInfo;
-use http_kit::{Body, BodyFrame, FileRegion, Request, Response};
+use http_kit::{Body, FileRegion, Request, Response};
 use http_kit_h1::{ServerConfig, ServerConnection, ServerOutcome, Upgraded};
 use http_kit_io::{BufResult, FromStd, Listener, Read, Split, Write, tokio::Tokio};
 use hyper_util::{
     rt::{TokioExecutor, TokioIo},
     service::TowerToHyperService,
 };
-use std::{
-    io,
-    net::SocketAddr,
-    pin::Pin,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::{io, net::SocketAddr, time::Duration};
 #[cfg(any(windows, target_os = "linux"))]
 mod file_writer;
 mod prefetched;
 mod short;
 mod workers;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 pub use workers::WorkerReactors;
 
 pub(crate) fn is_transient_accept_error(error: &io::Error) -> bool {
@@ -32,44 +26,6 @@ pub(crate) fn is_transient_accept_error(error: &io::Error) -> bool {
             | io::ErrorKind::Interrupted
             | io::ErrorKind::WouldBlock
     )
-}
-
-struct PrefetchedTcp {
-    pending: bytes::Bytes,
-    inner: tokio::net::TcpStream,
-}
-
-impl AsyncRead for PrefetchedTcp {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        if !self.pending.is_empty() {
-            let n = self.pending.len().min(buf.remaining());
-            buf.put_slice(&self.pending.split_to(n));
-            return Poll::Ready(Ok(()));
-        }
-        Pin::new(&mut self.inner).poll_read(cx, buf)
-    }
-}
-
-impl AsyncWrite for PrefetchedTcp {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.inner).poll_write(cx, buf)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.inner).poll_flush(cx)
-    }
-
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.inner).poll_shutdown(cx)
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -182,10 +138,10 @@ async fn serve_socket(
                     req
                 })
                 .service(app.router.into_service::<hyper::body::Incoming>());
-            let io = PrefetchedTcp {
-                pending: pending.freeze(),
-                inner: stream.into_inner(),
-            };
+            // Replay the bytes consumed during protocol detection before reading the socket.
+            let mut socket = stream.into_inner();
+            let (read, write) = socket.split();
+            let io = tokio::io::join(pending.as_ref().chain(read), write);
             let mut h2 = hyper::server::conn::http2::Builder::new(TokioExecutor::new());
             h2.max_concurrent_streams(256);
             return h2
@@ -363,17 +319,10 @@ async fn respond(app: PlainApp, peer: SocketAddr, transport: Transport, req: Req
         Some(region) => Body::from_file_region(region),
         None if axum::body::HttpBody::is_end_stream(&body) => Body::empty(),
         None => {
-            use futures_util::StreamExt;
-            let frames = http_body_util::BodyStream::new(body).map(|frame| {
-                let frame = frame.map_err(io::Error::other)?;
-                Ok::<_, io::Error>(match frame.into_data() {
-                    Ok(bytes) => BodyFrame::Data(bytes),
-                    Err(frame) => {
-                        BodyFrame::Trailers(frame.into_trailers().expect("http-body frame"))
-                    }
-                })
-            });
-            Body::from_frames(sync_wrapper::SyncStream::new(frames))
+            use http_body_util::{BodyExt, BodyStream, StreamBody};
+            // Axum bodies are Send. Wrap their frame stream for http-kit's Sync body.
+            let frames = sync_wrapper::SyncStream::new(BodyStream::new(body));
+            Body::new(StreamBody::new(frames).map_err(io::Error::other))
         }
     };
     Response::from_parts(parts, body)

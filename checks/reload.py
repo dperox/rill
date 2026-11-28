@@ -15,7 +15,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Thread
 
-from routing import Origin, JAPKA
+from routing import Origin, JAPKA, stop
 from sendfile import SLOW, read_exact_body, read_head, request, slow_socket
 
 LOOPBACK = "127.0.0.1"
@@ -100,15 +100,6 @@ def listening(port):
             return True
     except OSError:
         return False
-
-
-def stop(proc):
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
 
 
 def get(client, path, label):

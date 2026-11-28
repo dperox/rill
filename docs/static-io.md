@@ -20,14 +20,15 @@ matching validators skip reads of the body. Small files through 64 KiB use
 batched buffered reads and can share the response within a request group.
 
 The same plaintext port accepts static, proxy, and WebSocket requests.
+It supports HTTP/1 and prior-knowledge HTTP/2. Filesystems that do not
+support sendfile use buffered reads.
 
 ## Static-only listener
 
 Set `JAPKA_STATIC_LISTEN` (cross-platform) to add a dedicated plaintext listener
 that serves static files only. Requests matching a configured proxy prefix
-return HTTP 404 rather than falling back to files. It uses the plaintext
-`http-kit-h1` / prior-knowledge HTTP/2 driver and applies HTTP access rules,
-rate limits, and `JAPKA_HTTPS_REDIRECT`.
+return HTTP 404. The listener accepts HTTP/1 and prior-knowledge HTTP/2
+and applies HTTP access rules, rate limits, and `JAPKA_HTTPS_REDIRECT`.
 
 Use `JAPKA_SENDFILE=0` when cold or remote storage could stall a network
 worker that also serves latency-sensitive requests. A sendfile call can wait
@@ -66,5 +67,36 @@ flight. Compare settings at representative file sizes and client concurrency.
 filesystem tasks and DNS lookups. It accepts a positive integer from 1 to
 65535. The default is one on the general runtime. The Linux plaintext
 scheduler selects up to four blocking workers automatically for the CPU
-allocations and workloads described in the worker scheduling guide. A larger pool can handle more concurrent slow
-operations and use more memory. [Worker scheduling](hyper.md#linux-http-worker-scheduling)
+allocations and workloads below. A larger pool can handle more concurrent slow
+operations and use more memory.
+
+## Linux HTTP worker scheduling
+
+When Japka runs a single plaintext direct-file listener, each network worker can
+accept from the same listening socket and drive I/O for its own connections.
+A client stays on that worker for the lifetime of its connection. Routes,
+health checks and application caches are shared across workers.
+
+Japka selects worker counts at startup. For a single Linux plaintext listener
+with direct file delivery enabled, the defaults depend on the CPU allocation
+and workload.
+
+| CPU allocation and workload | Network workers | Maximum blocking workers |
+|---|---:|---:|
+| Two CPUs of quota shared across a wider set of CPUs | 1 | 2 |
+| Pinned to two CPUs, serving files or proxying requests | 2 | 2 |
+| Three or four CPUs, serving files without upstream routes or a reloadable config file | One per available CPU | One per network worker |
+| Four CPUs, with upstream routes or a reloadable config file | 4 | 1 |
+
+Japka reads the available parallelism and, for the two-CPU decision, the Linux
+thread affinity mask. If it cannot read that mask, it uses two network workers.
+Other automatic configurations use the available CPU count and one blocking
+worker. TLS, compression, disabled direct file delivery and additional
+listeners use the general runtime settings.
+
+Set `TOKIO_WORKER_THREADS` or `JAPKA_BLOCKING_THREADS` independently to
+override either count. With two or more network workers, the independent
+I/O workers need a blocking budget of at least one per network worker.
+Larger proxies and file-configured servers with more than two workers use
+the shared scheduler, which lets a reload add upstream routes. Japka reports
+both worker counts in its startup log.

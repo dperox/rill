@@ -41,6 +41,14 @@ def fetch(port, path, host):
     finally:
         conn.close()
 
+def stop(proc):
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
 @contextmanager
 def launch(command, env):
     with socket.socket() as sock:
@@ -60,8 +68,7 @@ def launch(command, env):
             raise RuntimeError(f"server did not listen on 127.0.0.1:{port}")
         yield port
     finally:
-        proc.terminate()
-        proc.wait(timeout=5)
+        stop(proc)
 
 def run():
     with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
