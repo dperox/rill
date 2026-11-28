@@ -7,25 +7,10 @@ Japka serves static websites, forwards HTTP requests to your applications, and b
 Let your AI help you set up and configure Japka. Copy this prompt into your AI assistant.
 
 ```text
-Help me configure Japka for a new or existing deployment. Ask where it will
-run, which hostnames and paths should serve files or forward requests, and
-which directories or backends to use.
-
-Use the configuration guide to prepare a change I can review.
-https://github.com/dperox/japka/blob/main/docs/config-review.md
-For installation with Cargo, Docker, or Kubernetes, use the deployment guide.
-https://github.com/dperox/japka/blob/main/docs/deployment.md
-
-Use japka config list --json for startup settings and japka config schema
-for the JSON file. For an existing service, run japka config show --json in
-its environment and preserve unrelated settings and inherited routes.
-
-Draft a separate candidate file. Point JAPKA_CONFIG at it for japka config test
-using the service’s working directory, environment, and mounts. If there is an
-active file, run japka config plan BASE CANDIDATE --json with both file paths.
-Show me what changes, which settings need a reload or restart, and a curl
-request with the expected response. Wait for my approval before applying the
-configuration or starting the service.
+Help me set up Japka, a Rust web server that serves static files, forwards
+requests to applications, and balances traffic across backends.
+Use the setup and configuration instructions in the project’s AGENTS.md.
+https://github.com/dperox/japka/blob/main/AGENTS.md
 ```
 
 | Where are you running Japka? | Start here |
