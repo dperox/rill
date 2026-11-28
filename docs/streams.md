@@ -56,4 +56,66 @@ python3 checks/streams.py target/debug/japka
 
 ## Kubernetes
 
-Use a backend Service ClusterIP as the numeric upstream address. The deployment guide shows the matching TCP and UDP listener and Service ports. [Kubernetes forwarding example](deployment.md#add-tcp-and-udp-forwarding)
+Start with the [HTTP Deployment and Service](deployment.md#kubernetes). Keep `namespace` set to the namespace where you deployed Japka. Use your backend Services’ ClusterIPs as the numeric upstream addresses in the example below.
+
+The base manifest enables HTTP only. Create a `japka-streams` ConfigMap with
+numeric upstream socket addresses that the Pods can reach, then apply the
+Deployment and Service patches below.
+
+```sh
+kubectl -n "$namespace" create configmap japka-streams \
+  --from-literal=JAPKA_TCP_LISTENERS=0.0.0.0:9000=192.0.2.10:19000 \
+  --from-literal=JAPKA_UDP_LISTENERS=0.0.0.0:5353=192.0.2.20:15353
+```
+
+```sh
+kubectl -n "$namespace" patch deployment japka --type=strategic --patch "$(cat <<'STREAMS_PATCH'
+spec:
+  template:
+    spec:
+      containers:
+        - name: japka
+          env:
+            - name: JAPKA_TCP_LISTENERS
+              valueFrom:
+                configMapKeyRef:
+                  name: japka-streams
+                  key: JAPKA_TCP_LISTENERS
+            - name: JAPKA_UDP_LISTENERS
+              valueFrom:
+                configMapKeyRef:
+                  name: japka-streams
+                  key: JAPKA_UDP_LISTENERS
+            - name: JAPKA_STREAM_BALANCE
+              valueFrom:
+                configMapKeyRef:
+                  name: japka-streams
+                  key: JAPKA_STREAM_BALANCE
+                  optional: true
+          ports:
+            - name: tcp-proxy
+              containerPort: 9000
+              protocol: TCP
+            - name: udp-proxy
+              containerPort: 5353
+              protocol: UDP
+STREAMS_PATCH
+)"
+kubectl -n "$namespace" rollout status deployment/japka
+kubectl -n "$namespace" patch service japka --type=strategic --patch "$(cat <<'STREAMS_SERVICE'
+spec:
+  ports:
+    - name: tcp-proxy
+      port: 9000
+      targetPort: tcp-proxy
+      protocol: TCP
+    - name: udp-proxy
+      port: 5353
+      targetPort: udp-proxy
+      protocol: UDP
+STREAMS_SERVICE
+)"
+```
+
+The Service keeps its existing address and HTTP port. Restart the Deployment
+when you change the ConfigMap values.

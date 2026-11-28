@@ -19,7 +19,7 @@ From the directory containing your **public website files**, start Japka and ope
 DOCUMENT_ROOT=. japka
 ```
 
-For a sample site or Windows instructions, see the [deployment guide](docs/deployment.md#install-with-cargo). [Japka on crates.io](https://crates.io/crates/japka) · [Prebuilt binaries](https://github.com/dperox/japka/releases/latest)
+Try the [sample site](docs/deployment.md#install-with-cargo) or download a [prebuilt binary](https://github.com/dperox/japka/releases/latest). [Japka on crates.io](https://crates.io/crates/japka)
 
 ## Run with Docker
 
@@ -27,7 +27,7 @@ For a sample site or Windows instructions, see the [deployment guide](docs/deplo
 docker run --rm -p 127.0.0.1:8080:8080 ghcr.io/dperox/japka:latest
 ```
 
-Open <http://127.0.0.1:8080/> for the bundled site. [Docker deployment](docs/deployment.md#docker) · [Apple containers](docs/deployment.md#apple-containers)
+Open <http://127.0.0.1:8080/> for the bundled site. [Mount your own site](docs/deployment.md#serve-your-own-site) · [Deploy to Kubernetes](docs/deployment.md#kubernetes)
 
 ## Performance on an M4 Mac mini
 
@@ -54,4 +54,4 @@ When an agent proposes adding a route, the plan shows its host, path prefix, and
 
 Translate an `nginx -T` dump into a candidate configuration, review the reported differences, and compare responses before switching traffic. [NGINX migration guide](docs/migration.md)
 
-[Routing examples](docs/routing.md) · [Feature guide](docs/features.md) · [Logo and icon](docs/brand.md) · [Contributing](AGENTS.md) · [MIT license](LICENSE)
+[Documentation](docs/README.md) · [Feature guide](docs/features.md) · [Logo and icon](docs/brand.md) · [Contributing](AGENTS.md) · [MIT license](LICENSE)

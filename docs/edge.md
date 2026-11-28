@@ -47,3 +47,65 @@ kill "$pid"
 The check verifies the certificate, negotiated TCP protocols and response bytes. An independent QUIC client retrieves the same file on two concurrent HTTP/3 streams. The echo check sends a 256 KiB POST through HTTP/3, verifies the upstream path, query, HTTP/1.1 version and response body, and checks removal of connection-specific response headers.
 
 The framing checks use curl_cffi with HTTP/2 and HTTP/3 and reuse connections across HEAD, missing-file, conditional and range requests. With the echo backend enabled, they also check proxied HEAD and 204 responses.
+
+## Kubernetes TLS and HTTP/3
+
+Start with the [HTTP Deployment and Service](deployment.md#kubernetes). Keep `namespace` set to the namespace where you deployed Japka. Create a TLS Secret in the Deployment’s namespace. The patch mounts it
+read-only and enables TLS on TCP and UDP port 8443. Plain HTTP and the TCP
+probes continue on 8080. To redirect HTTP clients, set `JAPKA_HTTPS_REDIRECT`
+to the public HTTPS authority. [Redirect settings](#redirect-plaintext-http)
+
+```sh
+kubectl -n "$namespace" create secret tls japka-tls --cert=./tls/tls.crt --key=./tls/tls.key
+kubectl -n "$namespace" patch deployment japka --type=strategic --patch "$(cat <<'PATCH'
+spec:
+  template:
+    spec:
+      securityContext:
+        fsGroup: 10001
+      volumes:
+        - name: tls
+          secret:
+            secretName: japka-tls
+            defaultMode: 0440
+      containers:
+        - name: japka
+          env:
+            - name: TLS_LISTEN
+              value: "0.0.0.0:8443"
+            - name: TLS_CERT
+              value: "/run/tls/tls.crt"
+            - name: TLS_KEY
+              value: "/run/tls/tls.key"
+          volumeMounts:
+            - name: tls
+              mountPath: /run/tls
+              readOnly: true
+PATCH
+)"
+kubectl -n "$namespace" rollout status deployment/japka
+kubectl -n "$namespace" apply -f - <<'SERVICE'
+apiVersion: v1
+kind: Service
+metadata:
+  name: japka-tls
+spec:
+  type: ClusterIP
+  selector:
+    app: japka
+  ports:
+    - name: https
+      port: 8443
+      targetPort: 8443
+      protocol: TCP
+    - name: http3
+      port: 8443
+      targetPort: 8443
+      protocol: UDP
+SERVICE
+```
+
+Use the TLS Service from inside the cluster. For external HTTP/3 clients,
+use a load balancer or gateway that forwards both transports. Preserve
+the advertised QUIC port. `kubectl port-forward` can test HTTPS over TCP.
+HTTP/3 needs a route to the UDP port. After the mounted Secret updates, send SIGHUP to each Japka process to rotate its certificate. A Deployment rollout also picks up the new files. [Graceful reloads](reload.md)
