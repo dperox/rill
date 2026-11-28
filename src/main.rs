@@ -633,7 +633,7 @@ async fn run(
     }));
     let app = PlainApp {
         router: app,
-        direct: fixed_upstream.then_some(dispatch),
+        direct: Some(dispatch),
     };
     let initial_policies = live.borrow().policies.clone();
     let app = initial_policies.apply_inner(app, live.clone());
