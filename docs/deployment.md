@@ -2,6 +2,26 @@
 
 Install the CLI with Cargo to serve files from your machine, run the published container for a bundled sample site, or deploy the release manifest to Kubernetes. Each example ends with an HTTP request so you can verify what a client receives.
 
+## Let your AI help you set up Japka
+
+Copy this prompt and paste it into your AI assistant.
+
+```text
+Help me set up Japka. Ask where I want to run it (Cargo, Docker, or Kubernetes),
+what files or application I want to serve, and what URL should reach it.
+Use the official guide at https://github.com/dperox/japka/blob/main/docs/deployment.md.
+
+Prepare the simplest setup that fits my answers. Use the target Japka binary’s
+help and config schema to check which settings it accepts. If I already run
+Japka, inspect the effective configuration, preserve my existing routes, and
+use japka config plan to show what your proposed file would change.
+
+Validate the proposal with japka config test using the intended environment
+and mounts. Show me the configuration, the commands to deploy it, and a curl
+request with the response I should expect. Tell me which checks you ran.
+Wait for my approval before applying the configuration or starting the service.
+```
+
 ## Install with Cargo
 
 With a stable Rust toolchain on your path, install Japka from crates.io. You can run this from any directory.

@@ -4,6 +4,8 @@ Japka serves static websites, forwards HTTP requests to your applications, and b
 
 ## Get running
 
+Let your AI help you set up Japka. [Copy the setup prompt](deployment.md#let-your-ai-help-you-set-up-japka) or follow the guide for your environment.
+
 | Where are you running Japka? | Start here |
 | --- | --- |
 | On your machine | [Install with Cargo and serve your first page](deployment.md#install-with-cargo) |

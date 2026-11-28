@@ -5,7 +5,7 @@ Japka is a web server, reverse proxy, and load balancer written in Rust. It can 
 - **Routing and protocols.** Route by hostname and path, serve HTTPS over HTTP/2 or HTTP/3, and proxy WebSocket connections.
 - **Health checks and reloads.** Send traffic to healthy backends and update routes and certificates on Unix while existing requests finish.
 - **Memory safety.** Rust’s ownership and borrowing rules prevent use-after-free bugs and data races in safe Rust code. Japka compiles to a native binary and runs without a garbage collector.
-- **AI-assisted configuration.** An agent can validate a proposed change and show you its effect before deployment. [Configuration review](docs/config-review.md)
+- **AI-assisted configuration.** An agent can prepare your setup, validate it, and show you what would change before deployment. [Copy the setup prompt](docs/deployment.md#let-your-ai-help-you-set-up-japka)
 
 ## Install with Cargo
 
