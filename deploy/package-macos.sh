@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Run from the release checkout. Produces an archive and a sibling SHA-256 file.
+# Run from the release checkout. Produces an ARM64 archive and a sibling SHA-256 file.
 set -euo pipefail
-case "${1:-}" in
-    arm64) target=aarch64-apple-darwin ;;
-    amd64) target=x86_64-apple-darwin ;;
-    *) echo "usage: $0 arm64|amd64 OUTPUT_DIRECTORY" >&2; exit 2 ;;
-esac
-mkdir -p -- "${2:?output directory required}"
+if [ "$#" -ne 2 ] || [ "$1" != arm64 ]; then
+    echo "usage: $0 arm64 OUTPUT_DIRECTORY" >&2
+    exit 2
+fi
+target=aarch64-apple-darwin
+mkdir -p -- "$2"
 out=$(cd -- "$2" && pwd)
 version=$(cargo metadata --locked --no-deps --format-version 1 |
     python3 -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "japka"))')
@@ -22,12 +22,11 @@ trap 'rm -rf -- "$stage"' EXIT INT TERM HUP
 mkdir -- "$stage/japka"
 cp -R -- "target/$target/release/japka" README.md LICENSE public notices "$stage/japka/"
 host_arch=$(uname -m)
-if { [ "$1" = "arm64" ] && [ "$host_arch" = "arm64" ]; } || \
-   { [ "$1" = "amd64" ] && [ "$host_arch" = "x86_64" ]; }; then
+if [ "$host_arch" = arm64 ]; then
     (cd -- "$stage/japka" && env -i PATH="$PATH" ./japka config test)
 else
-    echo "Skipping native preflight on $host_arch host for $1 binary" >&2
+    echo "Skipping native preflight on $host_arch host for ARM64 binary" >&2
 fi
-archive="japka-$version-macos-$1.tar.gz"
+archive="japka-$version-macos-arm64.tar.gz"
 COPYFILE_DISABLE=1 tar -czf "$out/$archive" -C "$stage" japka
 (cd -- "$out" && shasum -a 256 "$archive" > "$archive.sha256")

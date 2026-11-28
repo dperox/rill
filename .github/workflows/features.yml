@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-latest, macos-15, macos-15-intel]
+        runner: [ubuntu-latest, macos-15]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     steps:
@@ -73,15 +73,10 @@ jobs:
           cargo fmt --manifest-path perf/Cargo.toml --check
           cargo build --manifest-path perf/Cargo.toml --release --locked
           python3 perf/run.py --japka target/debug/japka --smoke
-      - name: Smoke-test the macOS release archive
+      - name: Smoke-test the macOS ARM64 release archive
         if: runner.os == 'macOS'
         run: |
-          case "$(uname -m)" in
-            arm64) arch=arm64 ;;
-            x86_64) arch=amd64 ;;
-            *) exit 1 ;;
-          esac
-          ./deploy/package-macos.sh "$arch" "$RUNNER_TEMP/dist"
+          ./deploy/package-macos.sh arm64 "$RUNNER_TEMP/dist"
           cd "$RUNNER_TEMP/dist"
           shasum -a 256 -c *.sha256
           tar -xzf *.tar.gz

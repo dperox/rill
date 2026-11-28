@@ -12,19 +12,10 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            runner: macos-15
-          - arch: amd64
-            runner: macos-15-intel
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-15
     timeout-minutes: 25
     env:
       RELEASE_TAG: ${{ github.ref_name }}
-      ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -33,12 +24,12 @@ jobs:
         run: |
           rustup update stable --no-self-update
           rustup default stable
-      - name: Package and preflight release
-        run: ./deploy/package-macos.sh "$ARCH" "$RUNNER_TEMP/dist"
+      - name: Package and preflight macOS ARM64 release
+        run: ./deploy/package-macos.sh arm64 "$RUNNER_TEMP/dist"
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: japka-release-macos-${{ matrix.arch }}
+          name: japka-release-macos-arm64
           path: ${{ runner.temp }}/dist/*
           if-no-files-found: error
 

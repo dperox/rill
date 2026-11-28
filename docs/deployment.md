@@ -15,6 +15,8 @@ cargo install japka
 japka --version
 ```
 
+For a prebuilt macOS binary, download the `macos-arm64` archive for Apple Silicon from the [release assets](https://github.com/japka-rs/japka/releases/latest).
+
 To serve an existing site, open a terminal in the directory containing your **public website files**. Check that Japka can read the site, then start the server.
 
 ```sh
