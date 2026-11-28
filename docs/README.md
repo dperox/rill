@@ -10,7 +10,7 @@ Let your AI help you set up and configure Japka. Copy this prompt into your AI a
 Help me set up Japka, a Rust web server that serves static files, forwards
 requests to applications, and balances traffic across backends.
 Use the setup and configuration instructions in the project’s AGENTS.md.
-https://github.com/dperox/japka/blob/main/AGENTS.md
+https://github.com/japka-rs/japka/blob/main/AGENTS.md
 ```
 
 | Where are you running Japka? | Start here |

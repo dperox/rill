@@ -1,4 +1,4 @@
-# <img src="https://raw.githubusercontent.com/dperox/japka/main/public/brand/japka-logo.png" width="360" alt="Japka">
+# <img src="https://raw.githubusercontent.com/japka-rs/japka/main/public/brand/japka-logo.png" width="360" alt="Japka">
 
 Japka is a web server, reverse proxy, and load balancer written in Rust. It can serve your website from disk and forward requests under `/api/` to your application. When the application runs on several backends, Japka distributes requests across them.
 
@@ -19,7 +19,7 @@ From the directory containing your **public website files**, start Japka and ope
 DOCUMENT_ROOT=. japka
 ```
 
-Try the [sample site](docs/deployment.md#install-with-cargo) or download a [prebuilt binary](https://github.com/dperox/japka/releases/latest). [Japka on crates.io](https://crates.io/crates/japka)
+Try the [sample site](docs/deployment.md#install-with-cargo) or download a [prebuilt binary](https://github.com/japka-rs/japka/releases/latest). [Japka on crates.io](https://crates.io/crates/japka)
 
 ## Run with Docker
 

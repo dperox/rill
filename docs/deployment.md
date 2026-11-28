@@ -75,7 +75,7 @@ To start the server, keep the mounts and environment, add `-p 127.0.0.1:8080:808
 The release provides a Deployment with two replicas and a ClusterIP Service on TCP port 8080. You need `kubectl` and a cluster whose nodes can pull the GHCR image. Download the manifest to your deployment directory and check which cluster you are targeting.
 
 ```sh
-curl -fL -o kubernetes.yaml https://github.com/dperox/japka/releases/latest/download/kubernetes.yaml
+curl -fL -o kubernetes.yaml https://github.com/japka-rs/japka/releases/latest/download/kubernetes.yaml
 kubectl config current-context
 ```
 
@@ -99,7 +99,7 @@ Run `japka config test` with the same working directory, environment, and files 
 
 ## Other deployment options
 
-- **Prebuilt binaries.** The release archives include the executable and sample site. Extract the archive and start Japka from the directory containing `public/`. [Release downloads](https://github.com/dperox/japka/releases/latest)
+- **Prebuilt binaries.** The release archives include the executable and sample site. Extract the archive and start Japka from the directory containing `public/`. [Release downloads](https://github.com/japka-rs/japka/releases/latest)
 - **Source builds and local clusters.** From the repo root, use `cargo build --release --locked` for the native binary or `docker build -f deploy/Dockerfile -t japka:local .` for an image. For kind, load that image with `kind load docker-image japka:local` and apply the [checkout manifest](../deploy/kubernetes.yaml), which selects the local image.
 - **TLS and additional ports.** HTTPS uses TCP. HTTP/3 also needs UDP on the TLS port. For TCP or UDP forwarding, expose each listener’s port and protocol on the Service. [HTTPS and HTTP/3 on Kubernetes](edge.md#kubernetes-tls-and-http3) · [TCP and UDP forwarding](streams.md#kubernetes)
 

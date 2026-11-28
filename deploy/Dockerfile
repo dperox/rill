@@ -5,7 +5,7 @@ COPY src ./src
 RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
-LABEL org.opencontainers.image.source="https://github.com/dperox/japka"
+LABEL org.opencontainers.image.source="https://github.com/japka-rs/japka"
 WORKDIR /app
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build --chmod=0555 /build/target/release/japka /usr/local/bin/japka

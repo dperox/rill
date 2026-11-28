@@ -5,8 +5,8 @@ edition = "2024"
 description = "HTTP reverse proxy, load balancer and static file server"
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/dperox/japka"
-documentation = "https://github.com/dperox/japka/blob/main/docs/README.md"
+repository = "https://github.com/japka-rs/japka"
+documentation = "https://github.com/japka-rs/japka/blob/main/docs/README.md"
 
 [dependencies]
 futures-util = "0.3"

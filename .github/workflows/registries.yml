@@ -46,7 +46,7 @@ jobs:
           sudo apt-get install -y skopeo
           printf '%s' "$GH_TOKEN" | skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           printf '%s' "$DOCKERHUB_TOKEN" | skopeo login docker.io -u dperox --password-stdin
-          src=docker://ghcr.io/dperox/japka
+          src=docker://ghcr.io/japka-rs/japka
           dst=docker://docker.io/dperox/japka
           digest=$(skopeo inspect --format '{{.Digest}}' "$src:latest")
           skopeo inspect --raw "$src@$digest" | jq -e '[.manifests[].platform.architecture] | contains(["amd64","arm64"])'

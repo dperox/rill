@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/dperox/japka
+  IMAGE: ghcr.io/japka-rs/japka
 
 jobs:
   build:
