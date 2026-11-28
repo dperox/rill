@@ -1,6 +1,6 @@
 [package]
 name = "japka"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 description = "HTTP reverse proxy, load balancer and static file server"
 license = "MIT"
@@ -37,6 +37,8 @@ libc = "0.2"
 tokio-util = { version = "0.7", features = ["io"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+schemars = "1.2"
+serde_path_to_error = "0.1"
 hyper-rustls = { version = "0.27.10", default-features = false, features = ["native-tokio", "http1", "tls12", "ring"] }
 
 [target.'cfg(any(windows, target_os = "linux"))'.dependencies]

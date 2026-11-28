@@ -1,6 +1,6 @@
 # Fixed-upstream proxy performance on Apple M4
 
-The final candidate (`b55bc5f`) ran with `RILL_FIXED_UPSTREAM=1`. The baseline was PR #3 (`77e8b43`), and the comparison server was NGINX 1.31.10. For native 4 KiB GETs, the throughput gap went from 9,666 to 3,216 requests/s, closing 66.7% of the original gap. The calculation uses the differences between the three six-round medians.
+The final candidate (`b55bc5f`) ran with `RILL_FIXED_UPSTREAM=1`. The baseline was the archived Rill revision `77e8b43`, and the comparison server was NGINX 1.31.10. For native 4 KiB GETs, the throughput gap went from 9,666 to 3,216 requests/s, closing 66.7% of the original gap. The calculation uses the differences between the three six-round medians.
 
 ## Final opt-in proxy results
 
@@ -63,7 +63,7 @@ for workload in proxy static; do
   rounds=6
   if [ "$workload" = static ]; then rounds=3; fi
   python3 bench/macos.py --image rill-fixed-bench:local --nginx "$(command -v nginx)" \
-    --baseline-rill "$work/base/target/release/rill" --rill "$work/candidate/target/release/rill" \
+    --baseline-japka "$work/base/target/release/rill" --japka "$work/candidate/target/release/rill" \
     --fixed-upstream --workload "$workload" --rounds "$rounds" > "$work/$workload.csv"
 done
 ```

@@ -1,13 +1,21 @@
+pub(crate) mod config;
 use super::*;
 use serde::Deserialize;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize, schemars::JsonSchema)]
+#[schemars(rename = "Route")]
 #[serde(deny_unknown_fields)]
 pub struct Definition {
+    /// Exact host, case insensitive. Omit to match any host.
     #[serde(default)]
-    host: Option<String>,
-    prefix: String,
+    pub(crate) host: Option<String>,
+    /// Path prefix including its leading and trailing slash.
+    #[schemars(regex(pattern = "^/(?:[^?#]*/)?$"))]
+    pub(crate) prefix: String,
+    /// Ordered HTTP or HTTPS backend authorities.
+    #[schemars(length(min = 1))]
     upstreams: Vec<String>,
+    /// Retry eligible reads on another peer after a connection failure.
     #[serde(default)]
     failover: bool,
 }
@@ -17,6 +25,22 @@ pub struct Route {
     prefix: String,
     pool: Arc<Pool>,
     probes: Vec<tokio::task::AbortHandle>,
+}
+
+impl Route {
+    pub(crate) fn definition(&self) -> Definition {
+        Definition {
+            host: self.host.clone(),
+            prefix: self.prefix.clone(),
+            upstreams: self
+                .pool
+                .servers
+                .iter()
+                .map(|s| format!("{}://{}", s.scheme, s.authority))
+                .collect(),
+            failover: self.pool.failover,
+        }
+    }
 }
 
 impl Drop for Route {
@@ -29,8 +53,8 @@ impl Drop for Route {
 
 pub fn from_env() -> io::Result<Vec<Definition>> {
     let mut definitions: Vec<Definition> = match crate::settings::var("JAPKA_ROUTES") {
-        Ok(json) => serde_json::from_str(&json)
-            .map_err(|e| io::Error::other(format!("JAPKA_ROUTES: {e}")))?,
+        Ok(json) => crate::settings::parse_json(json.as_bytes())
+            .map_err(|e| crate::settings::context(e, "JAPKA_ROUTES"))?,
         Err(env::VarError::NotPresent) => vec![],
         Err(e) => return Err(io::Error::other(format!("JAPKA_ROUTES: {e}"))),
     };
@@ -105,34 +129,32 @@ pub fn has_traversal_segment(path: &str) -> bool {
 pub fn load(
     definitions: Vec<Definition>,
     policy: &policy::Policies,
+    settings: &config::PoolSettings,
     start_probes: bool,
     fixed_upstream: bool,
 ) -> io::Result<Vec<Route>> {
-    let least = match crate::settings::var("JAPKA_HTTP_BALANCE").as_deref() {
-        Ok("round_robin") | Err(env::VarError::NotPresent) => false,
-        Ok("least_connections") => true,
-        _ => {
-            return Err(io::Error::other(
-                "JAPKA_HTTP_BALANCE must be round_robin or least_connections",
+    let health = settings.health();
+    let mut routes = Vec::new();
+    for (index, d) in definitions.into_iter().enumerate() {
+        if !d.prefix.starts_with('/') || !d.prefix.ends_with('/') || d.prefix.contains(['?', '#']) {
+            return Err(crate::settings::field_error(
+                format!("routes[{index}].prefix"),
+                "expected a /prefix/ without a query or fragment",
             ));
         }
-    };
-    let health = upstream::Health::from_env()?;
-    let mut routes = Vec::new();
-    for d in definitions {
-        if !d.prefix.starts_with('/')
-            || !d.prefix.ends_with('/')
-            || d.prefix.contains(['?', '#'])
-            || d.upstreams.is_empty()
-        {
-            return Err(io::Error::other(
-                "each route needs a /prefix/ and at least one upstream",
+        if d.upstreams.is_empty() {
+            return Err(crate::settings::field_error(
+                format!("routes[{index}].upstreams"),
+                "each route needs at least one upstream",
             ));
         }
         let host = d
             .host
             .as_deref()
-            .map(|s| validate_hostname(s, "route host"))
+            .map(|s| {
+                validate_hostname(s, "route host")
+                    .map_err(|e| crate::settings::field_error(format!("routes[{index}].host"), e))
+            })
             .transpose()?;
         if routes
             .iter()
@@ -147,7 +169,12 @@ pub fn load(
         let servers = d
             .upstreams
             .iter()
-            .map(|s| upstream::Endpoint::parse(s))
+            .enumerate()
+            .map(|(peer, s)| {
+                upstream::Endpoint::parse(s).map_err(|e| {
+                    crate::settings::field_error(format!("routes[{index}].upstreams[{peer}]"), e)
+                })
+            })
             .collect::<io::Result<Vec<_>>>()?;
         let client = upstream::Transport::new(&servers, fixed_upstream)?;
         let healthy = if health.is_some() {
@@ -155,7 +182,9 @@ pub fn load(
         } else {
             vec![]
         };
-        let active = least.then(|| std::sync::Mutex::new(vec![0; servers.len()]));
+        let active = settings
+            .least_connections()
+            .then(|| std::sync::Mutex::new(vec![0; servers.len()]));
         routes.push(Route {
             host,
             probes: Vec::new(),

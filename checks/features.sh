@@ -14,3 +14,4 @@ python3 checks/websocket.py
 python3 checks/sites.py
 python3 checks/edge_routing.py
 python3 checks/migration.py
+python3 checks/config_review.py

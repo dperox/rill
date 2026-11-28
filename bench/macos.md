@@ -44,22 +44,17 @@ Native Rill was the release build from `3af81fc`; native NGINX came from Homebre
 
 NGINX used a single worker, `sendfile on`, HTTP/1.1 upstream keep-alive, and disabled access logging, compression and proxy caching. NGINX used its default proxy buffering configuration and logged temporary-file buffering for some native 256 KiB proxy responses. Rill used one network worker and one blocking worker. Both native proxies used the same single-worker Rill origin. Each container used an equivalent Rill origin over guest loopback. [All 48 rounds](macos-nginx-rounds.csv) · [Comparison image](Dockerfile.macos-nginx)
 
-To repeat the comparison, install native NGINX and wrk and verify `nginx -v` matches the version in the comparison image. From the checkout with a release build of Rill and Apple container services running:
+## Run the workloads with Japka
 
-```sh
-container build -f bench/Dockerfile.macos-nginx -t rill-nginx:mac-bench .
-python3 bench/macos.py --nginx "$(command -v nginx)" --image rill-nginx:mac-bench > macos-nginx-rounds.csv
-```
-
-## Reproduce the Rill baseline
-
-On an Apple silicon Mac with stable Rust, Python 3, wrk with Lua, and Apple `container`, run from the repository root:
+From the checkout on Apple silicon, use stable Rust, Python 3, a Lua-enabled wrk and Apple’s `container`. The driver checks responses from both the native process and the published container port. For the NGINX comparison, install native NGINX and match its version to the comparison Dockerfile.
 
 ```sh
 cargo build --release --locked
 container system start
-container build -f deploy/Dockerfile -t rill:local .
-python3 bench/macos.py --image rill:local > macos-rounds.csv
+container build -f deploy/Dockerfile -t japka:local .
+python3 bench/macos.py --image japka:local > target/macos-rounds.csv
+container build -f bench/Dockerfile.macos-nginx -t japka-nginx:mac-bench .
+python3 bench/macos.py --nginx "$(command -v nginx)" --image japka-nginx:mac-bench > target/macos-nginx-rounds.csv
 ```
 
-The driver starts both frontends and their backends, measures each pair from macOS, and stops its processes and container. Use `--wrk` and `--rill` to select alternative executable paths. [Deployment and release downloads](../docs/deployment.md#macos)
+The comparison Dockerfile takes its Japka binary from the GHCR release image. Record its digest and the native revision alongside new measurements. Use `--japka` or `--wrk` to select alternative executables. [Deployment guide](../docs/deployment.md#macos)

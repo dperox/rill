@@ -20,9 +20,13 @@ japka config test && japka
 
 In a second terminal, run `curl --fail http://127.0.0.1:8080/` to retrieve the page. For an existing site, set `DOCUMENT_ROOT` to its directory. For PowerShell commands, see [Native Windows](#native-windows).
 
+## Review configuration changes
+
+Run `japka config test` with the deployment’s environment, mounts and working directory before starting the service. Use `japka config plan` to preview changes to a JSON file. On native Unix, a trusted deploy job can apply the reviewed plan and verify the affected route. [Configuration review](config-review.md) · [Manual Unix reloads](reload.md)
+
 ## macOS
 
-For a native install, use `cargo install japka`. The [release downloads](https://github.com/dperox/japka/releases/latest) also include archives for Apple silicon and Intel Macs that target macOS 15 and later.
+The [release downloads](https://github.com/dperox/japka/releases/latest) also include archives for Apple silicon and Intel Macs that target macOS 15 and later.
 
 To build your own archive from a source checkout on Apple silicon, run the commands below. Use `amd64` for Intel Macs.
 
@@ -62,7 +66,7 @@ if ($LASTEXITCODE -eq 0) { japka }
 
 The [release downloads](https://github.com/dperox/japka/releases/latest) also include a Windows x86-64 archive with the executable and sample site. To serve the sample, extract the archive, open a fresh PowerShell window alongside `japka.exe`, and run `.\japka.exe` with the default document root (`.\public`).
 
-In a second shell, run `curl.exe -i http://127.0.0.1:8080/` and verify the expected page. Native checks covered static GET and HEAD, HTTPS, HTTP proxying and policies, TCP and UDP forwarding, and configuration preflight. On Windows, restart Japka to apply a new configuration. Set `JAPKA_SENDFILE=0` before startup to use buffered file delivery instead of Windows TransmitFile. [Windows file settings](static-io.md#windows-transmitfile)
+In a second shell, run `curl.exe -i http://127.0.0.1:8080/` and verify the expected page. On Windows, restart Japka to apply a new configuration. Set `JAPKA_SENDFILE=0` before startup to use buffered file delivery instead of Windows TransmitFile. [Windows file settings](static-io.md#windows-transmitfile)
 
 To cross-compile the Windows executable on Linux, install the GNU MinGW-w64 x86-64 C compiler and linker and run the following from the repository root. Cargo writes `japka.exe` to `target/x86_64-pc-windows-gnu/release/`.
 
@@ -182,13 +186,10 @@ set that tag in the Deployment.
 
 ### Pull from a registry
 
-Replace the example registry and tag with a repository the nodes can pull
-from.
+Use the published GHCR image, or push a custom image to a registry the nodes can pull from. For example, to deploy the published image by digest, set `JAPKA_IMAGE` to its full reference (`ghcr.io/dperox/japka@sha256:…`).
 
 ```sh
-docker tag japka:local registry.example.com/team/japka:v1
-docker push registry.example.com/team/japka:v1
-sed 's|image: japka:local|image: registry.example.com/team/japka:v1|' \
+sed "s|image: japka:local|image: ${JAPKA_IMAGE:?set the image reference}|" \
   deploy/kubernetes.yaml | kubectl apply -f -
 kubectl rollout status deployment/japka
 ```
@@ -275,10 +276,10 @@ See the [transport guide](streams.md) for pool and balancing syntax.
 
 ### Add HTTPS and HTTP/3
 
-Create a TLS Secret in the Deployment’s namespace. This patch mounts it
-read-only, enables TLS on TCP and UDP port 8443, and sets `JAPKA_HTTPS_REDIRECT`
-so cleartext HTTP traffic on port 8080 redirects to HTTPS. The TCP probes stay
-on 8080 and continue to succeed with redirects enabled.
+Create a TLS Secret in the Deployment’s namespace. The patch mounts it
+read-only and enables TLS on TCP and UDP port 8443. Plain HTTP and the TCP
+probes continue on 8080. To redirect HTTP clients, set `JAPKA_HTTPS_REDIRECT`
+to the public HTTPS authority. [Redirect settings](edge.md#redirect-plaintext-http)
 
 ```sh
 kubectl create secret tls japka-tls --cert=./tls/tls.crt --key=./tls/tls.key

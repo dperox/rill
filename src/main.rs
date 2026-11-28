@@ -1,4 +1,5 @@
 mod access_log;
+mod config_review;
 mod edge;
 mod migration;
 mod plain;
@@ -252,6 +253,11 @@ fn print_help() {
 Usage:
   japka                         Start the server using environment/JAPKA_CONFIG
   japka config test             Validate configuration and exit 0 (valid) or 1 (invalid)
+  japka config list [--json]    List startup settings and the reloadable file schema
+  japka config schema           Print the JSON Schema for JAPKA_CONFIG
+  japka config show [--json]    Show resolved routes, sites and TLS file references
+  japka config plan BASE CANDIDATE [--json]
+                                Validate both files in this environment and preview changes
   japka migrate nginx [DUMP|-]  Translate an `nginx -T` dump into a candidate report (exit 0/2/1)
   japka --version | -V          Print version information
   japka --help | -h             Show this help message
@@ -259,7 +265,7 @@ Usage:
 Key environment variables:
   LISTEN                HTTP bind address (default: 127.0.0.1:$PORT or 127.0.0.1:8080)
   DOCUMENT_ROOT         Default static site directory (default: public)
-  JAPKA_CONFIG           Path to reloadable JSON configuration (sites, routes, tls)
+  JAPKA_CONFIG           Path to reloadable JSON configuration (sites, routes, tls, proxy)
   TLS_LISTEN            HTTPS/HTTP2/HTTP3 bind address (requires TLS_CERT/TLS_KEY or tls config)
   UPSTREAMS             Comma-separated default /api/ upstream endpoints
   JAPKA_FIXED_UPSTREAM   Set to 1 for the single-peer GET fast path (default: 0)
@@ -276,8 +282,14 @@ fn main() {
         .collect::<Vec<_>>()
         .as_slice()
     {
-        [] => runtime(false),
-        ["config", "test"] => migration::validation(runtime(true)),
+        [] => runtime(Mode::Serve),
+        ["config", "test"] => migration::validation(runtime(Mode::Test)),
+        ["config", "list"] | ["config", "list", "--json"] => config_review::list(),
+        ["config", "schema"] => config_review::schema(),
+        ["config", "show"] | ["config", "show", "--json"] => config_review::show(),
+        ["config", "plan", base, candidate] | ["config", "plan", base, candidate, "--json"] => {
+            config_review::plan(base, candidate)
+        }
         ["migrate", "nginx"] => migration::run("-"),
         ["migrate", "nginx", "--help"]
         | ["migrate", "nginx", "-h"]
@@ -285,8 +297,11 @@ fn main() {
         | ["migrate", "-h"]
         | ["config", "--help"]
         | ["config", "-h"]
-        | ["config", "test", "--help"]
-        | ["config", "test", "-h"]
+        | [
+            "config",
+            "test" | "list" | "show" | "plan" | "schema",
+            "--help" | "-h",
+        ]
         | ["--help"]
         | ["-h"] => {
             print_help();
@@ -323,7 +338,37 @@ fn wider_cpu_affinity(cpus: usize) -> bool {
     count.is_ok_and(|count| count > cpus)
 }
 
-fn runtime(check: bool) -> io::Result<()> {
+enum Mode<'a> {
+    Serve,
+    Test,
+    Inspect {
+        path: Option<&'a std::path::Path>,
+        snapshot: &'a mut config_review::Snapshot,
+    },
+}
+
+impl<'a> Mode<'a> {
+    fn check(&self) -> bool {
+        !matches!(self, Self::Serve)
+    }
+    fn path(&self) -> Option<PathBuf> {
+        match self {
+            Self::Inspect {
+                path: Some(path), ..
+            } => Some(path.to_path_buf()),
+            _ => settings::var_os("JAPKA_CONFIG").map(PathBuf::from),
+        }
+    }
+    fn snapshot(self) -> Option<&'a mut config_review::Snapshot> {
+        match self {
+            Self::Inspect { snapshot, .. } => Some(snapshot),
+            _ => None,
+        }
+    }
+}
+
+fn runtime(mode: Mode<'_>) -> io::Result<()> {
+    let check = mode.check();
     let cpus = std::thread::available_parallelism().map_or(1, |count| count.get());
     let enable_sendfile = match crate::settings::var("JAPKA_SENDFILE").as_deref() {
         Ok("0") => false,
@@ -351,9 +396,7 @@ fn runtime(check: bool) -> io::Result<()> {
     // on reload, uses the shared scheduler.
     let independent_io = direct_http
         && workers > 1
-        && (workers == 2
-            || (crate::settings::var_os("JAPKA_CONFIG").is_none()
-                && routing::from_env()?.is_empty()));
+        && (workers == 2 || (mode.path().is_none() && routing::from_env()?.is_empty()));
     let blocking_threads = match crate::settings::var("JAPKA_BLOCKING_THREADS") {
         Ok(value) => usize::from(
             value
@@ -377,7 +420,7 @@ fn runtime(check: bool) -> io::Result<()> {
         let reactors = plain::WorkerReactors::new(workers, blocking_threads);
         return reactors
             .runtime(0)?
-            .block_on(run(check, Some(reactors), enable_sendfile, streams));
+            .block_on(run(mode, Some(reactors), enable_sendfile, streams));
     }
     let mut runtime = if workers == 1 {
         tokio::runtime::Builder::new_current_thread()
@@ -390,12 +433,7 @@ fn runtime(check: bool) -> io::Result<()> {
         .enable_all()
         .max_blocking_threads(blocking_threads)
         .build()?
-        .block_on(tokio::task::LocalSet::new().run_until(run(
-            check,
-            None,
-            enable_sendfile,
-            streams,
-        )))
+        .block_on(tokio::task::LocalSet::new().run_until(run(mode, None, enable_sendfile, streams)))
 }
 
 enum Target {
@@ -551,11 +589,12 @@ impl PlainApp {
 }
 
 async fn run(
-    check: bool,
+    mode: Mode<'_>,
     reactors: Option<plain::WorkerReactors>,
     enable_sendfile: bool,
     streams: Vec<streams::ListenerConfig>,
 ) -> io::Result<()> {
+    let check = mode.check();
     let stream_chunk = static_io::stream_chunk_bytes()?;
     let root = PathBuf::from(env::var_os("DOCUMENT_ROOT").unwrap_or_else(|| "public".into()));
     let default_site = sites::Site::open(&root, stream_chunk)?;
@@ -564,7 +603,7 @@ async fn run(
         Some("1") => true,
         _ => return Err(io::Error::other("JAPKA_FIXED_UPSTREAM must be 0 or 1")),
     };
-    let (live, tls_address) = reload::start(stream_chunk, check, fixed_upstream)?;
+    let (live, tls_address) = reload::start(stream_chunk, mode, fixed_upstream)?;
     let dispatch = Arc::new(Dispatch {
         live: live.clone(),
         default_site,

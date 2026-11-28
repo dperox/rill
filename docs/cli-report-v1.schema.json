@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Japka CLI report v1",
+  "title": "Japka migration, preflight and CLI error report v1",
   "type": "object",
   "required": ["schema_version", "command", "status", "diagnostics"],
   "properties": {
@@ -16,6 +16,7 @@
         "properties": {
           "code": {"type": "string"},
           "message": {"type": "string"},
+          "path": {"type": "string"},
           "file": {"type": ["string", "null"]},
           "line": {"type": ["integer", "null"], "minimum": 1},
           "context": {"type": "string"},

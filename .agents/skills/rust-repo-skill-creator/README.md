@@ -11,5 +11,3 @@ Open an existing Rust repo and ask:
 For a greenfield repo:
 
 > Use rust-repo-skill-creator in bootstrap mode. Design the smallest idiomatic Rust architecture for this project, generate a repo-specific feature-development skill, and propose the layout before implementing code.
-
-The package contains instructions and a template, not an automated source rewriter or an architectural linter. It has not been run against a specific Rust repo. A coding agent must inspect the repository, fill the template, and execute the appropriate checks. No application code, dependency or CI changes are required merely to install it.

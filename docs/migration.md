@@ -19,7 +19,9 @@ Japka also accepts the dump on stdin. It reads included content from the dump it
 | 0 / 1 | `config test` reports `valid` / `invalid` | Read diagnostics on failure. |
 | 1 | `cli` reports `error` (`invalid_arguments`) | Check CLI syntax with `japka --help` or version with `japka --version`. |
 
-The [version 1 JSON Schema](cli-report-v1.schema.json) describes the report for machine validation. All JSON-emitting CLI commands (`migrate nginx`, `config test`, and invalid CLI invocations reporting `command: "cli"`) emit `schema_version: 1`, `command`, `status`, and a `diagnostics` array. Branch on the exit code, then check the schema version and diagnostic `code`. Messages are for people. Migration records for directives include the source `file`, one-based `line`, enclosing `context`, directive name and classification. For example, an auth subrequest produces `authentication_required`; a URI on `proxy_pass` produces `proxy_uri_replacement`. Every translated virtual server also has a review record for NGINX defaults and listener scope, so real server migrations exit 2 (`review_required`). Use `japka --help` (`-h`) for usage and `japka --version` (`-V`) for the binary version.
+Migration, preflight and CLI argument errors use the [version 1 report schema](cli-report-v1.schema.json). Read the exit status, then `schema_version` and the diagnostic `code`. A field-specific preflight error can also include `path`. Migration diagnostics identify the source file, line and directive context. For example, `authentication_required` calls for reviewing access control, and `proxy_uri_replacement` flags a difference in the path sent to an upstream.
+
+Run `japka config schema` for the accepted JSON file format. For a diff against an existing deployment under the same startup environment, use the [configuration review workflow](config-review.md).
 
 `candidate.config` is the Japka JSON object. `candidate.environment` contains literal string settings to pass through the process environment. For example, after review:
 

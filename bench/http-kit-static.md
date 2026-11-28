@@ -1,5 +1,7 @@
 # Rill vs. NGINX
 
+These tables identify the historical Rill binaries used in the measurements. For a fresh run against Japka, use the [benchmark drivers](README.md).
+
 ## Throughput by core count
 
 Median requests per second for Rill v0.1.0 and NGINX 1.30.8 with 64 clients. The last column divides the four-core result by the one-core result for the same server and workload.
@@ -46,7 +48,7 @@ file-configured deployments that can add proxy routes on reload.
 First implementation (`a74bcf3`)
 
 To repeat this comparison with the driver below, supply
-`--baseline-rill /path/to/v0.1.0/rill --rill /path/to/new/rill` as the
+`--baseline-japka /path/to/baseline --japka /path/to/candidate` as the
 comparison pair. Run `--workload static` and `--workload proxy` separately
 with a 4096-byte payload. Set `RILL_BLOCKING_THREADS` to
 the number of frontend cores for each run.

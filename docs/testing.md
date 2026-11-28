@@ -69,6 +69,12 @@ From the checkout in PowerShell, point `JAPKA` at an absolute Windows executable
 
 ## Feature acceptance
 
-Run `./checks/features.sh` from the repository root. It builds a locked debug binary, then runs the reload, shared listener, WebSocket, static site, access log, redirect, SNI, failover and migration CLI acceptance checks against that binary. Set `JAPKA` to an absolute binary path to test an existing build instead.
+Run `./checks/features.sh` from the repository root. It builds a locked debug binary unless `JAPKA` selects an existing one. The suite covers HTTP features, NGINX migration and the configuration review workflow. To run only the review check:
+
+```sh
+python3 checks/config_review.py
+```
+
+On Unix this check starts a local service, adds a route while preserving an inherited route, rejects stale approval inputs, rolls back after a failed probe and retries an interrupted rollout. [Configuration review guide](config-review.md)
 
 These checks use loopback connections and temporary fixtures. With the optional HTTP/3 dependencies from the [TLS guide](edge.md#local-protocol-check), run `python3 checks/reload.py --http3` to check QUIC routing and default certificate rotation. Run `python3 checks/edge_routing.py --http3` to verify a named certificate over QUIC after rotation. The [feature guide](features.md) describes the client and operator behaviors they verify.

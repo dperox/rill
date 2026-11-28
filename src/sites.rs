@@ -8,10 +8,13 @@ use std::{
 };
 use tower_http::services::ServeDir;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
+#[schemars(rename = "Site")]
 #[serde(deny_unknown_fields)]
 pub struct Definition {
+    /// Exact hostname for this static site.
     host: String,
+    /// Directory, relative to the configuration file or absolute.
     root: PathBuf,
 }
 

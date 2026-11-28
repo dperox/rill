@@ -1,18 +1,13 @@
 # HTTP benchmarks
 
-Historical reports and raw results identify the original Rill builds that were measured. Reproducing those runs requires archived binaries or source revisions. The current container examples run Japka.
+Use the drivers below to measure the current Japka build. The linked reports record measurements taken under the project’s former name, Rill. Their revisions, release numbers and raw samples identify those historical binaries.
 
-[Compare Japka and NGINX on static files and reverse proxy traffic.](http-kit-static.md)
-
-[Compare Japka and NGINX through Kubernetes HTTPS ingress.](kubernetes/README.md)
-
-Use [compare.py](compare.py) for throughput, p95 latency and peak front-end RSS,
-and [connections.py](connections.py) for idle persistent connections. The
-[Linux sendfile report](sendfile.md) covers the immutable asset cache, sendfile, and TCP socket settings.
-
-The [macOS benchmark](macos.md#rill-and-nginx-on-the-same-mac) compares Japka and NGINX both natively and through Apple containers’ published ports on the same M4 Mac.
-
-The [Windows and WSL2 baseline](windows.md) compares native loopback workloads on the same machine.
+| Workload | Measurements |
+| --- | --- |
+| Linux static files and reverse proxy | [Throughput, latency and memory against NGINX](http-kit-static.md) · [Sendfile and immutable asset cache](sendfile.md) |
+| HTTPS through Kubernetes ingress | [Three-replica load and rolling updates](kubernetes/README.md) |
+| Apple silicon | [Native and Apple container results](macos.md) · [Fixed-upstream GETs](fixed-upstream.md) |
+| Windows and WSL2 | [Native loopback and direct file delivery](windows.md) |
 
 ## Throughput and latency
 

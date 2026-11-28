@@ -55,5 +55,4 @@ both worker counts in its startup log.
 [Default-setting benchmarks](../bench/kubernetes/README.md#automatic-worker-defaults)
 and [native multicore measurements](../bench/http-kit-static.md#linux-worker-scheduling-after-v010).
 
-See the [Japka vs. NGINX benchmarks](../bench/http-kit-static.md) and
-[static file settings](static-io.md).
+[Transport dependencies](crates.md) · [Static file settings](static-io.md)

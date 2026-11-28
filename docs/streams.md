@@ -10,7 +10,7 @@ LISTEN=127.0.0.1:8080 \
 JAPKA_TCP_LISTENERS='127.0.0.1:9000=127.0.0.1:19000,127.0.0.1:19001' \
 JAPKA_UDP_LISTENERS='127.0.0.1:5353=127.0.0.1:15353,127.0.0.1:15354' \
 JAPKA_STREAM_BALANCE=round_robin \
-target/debug/japka
+japka
 ```
 
 Set `JAPKA_STREAM_BALANCE=least_connections` to choose the upstream with
@@ -39,7 +39,7 @@ example, with IMAP on port 1143, POP3 on 1110, and SMTP on 1025:
 
 ```sh
 JAPKA_TCP_LISTENERS='127.0.0.1:8143=127.0.0.1:1143;127.0.0.1:8110=127.0.0.1:1110;127.0.0.1:8025=127.0.0.1:1025' \
-target/debug/japka
+japka
 ```
 
 The upstream sends its normal greeting and handles commands, authentication, and
@@ -56,8 +56,4 @@ python3 checks/streams.py target/debug/japka
 
 ## Kubernetes
 
-The base manifest exposes HTTP on port 8080. To add a TCP proxy on port 9000
-or a UDP proxy on port 5353, configure the listener to bind to a Pod-reachable
-address such as `0.0.0.0` and supply its upstreams. Add the matching port and
-protocol to the Deployment and Service. A backend Service ClusterIP is a stable
-numeric upstream address for a stream listener. [Deployment guide](deployment.md)
+Use a backend Service ClusterIP as the numeric upstream address. The deployment guide shows the matching TCP and UDP listener and Service ports. [Kubernetes forwarding example](deployment.md#add-tcp-and-udp-forwarding)

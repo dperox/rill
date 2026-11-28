@@ -25,6 +25,11 @@ class KeepAliveOrigin(Origin):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self):
+        if self.path == "/ready":
+            self.send_response(self.server.ready_status)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if self.path != "/api/mutable":
             return super().do_GET()
         self.server.reads += 1
@@ -251,6 +256,70 @@ def check(work, origins, sendfile, http3):
         check_generation(http_port, tls_port, trust, old_cert, "old", stack, old_ca)
 
 
+def check_proxy_reload(work, origins):
+    old, new = origins
+    config = work / "proxy.json"
+    log = work / "proxy.log"
+    port = free_port()
+    publish(config, {})
+    peers = ",".join(f"{LOOPBACK}:{origin.server_port}" for origin in origins)
+    env = dict(PATH=os.environ["PATH"], DOCUMENT_ROOT=str(work / "public"), LISTEN=f"{LOOPBACK}:{port}",
+               JAPKA_CONFIG=str(config), UPSTREAMS=peers, JAPKA_HEALTH_INTERVAL_SECS="1")
+    old.ready_status, new.ready_status = 503, 200
+    for origin in origins:
+        origin.release.clear()
+        origin.started.clear()
+    with ExitStack() as stack:
+        with log.open("wb") as out:
+            proc = subprocess.Popen([JAPKA], env=env, stderr=out)
+        stack.callback(stop, proc)
+        wait_until(proc, log, "listener", lambda: listening(port))
+        client = HTTPConnection(LOOPBACK, port, timeout=5)
+        held = HTTPConnection(LOOPBACK, port, timeout=5)
+        stack.callback(client.close)
+        stack.callback(held.close)
+        for origin in origins:
+            stack.callback(origin.release.set)
+
+        def labels():
+            results = []
+            for _ in range(4):
+                client.request("GET", "/api/item")
+                reply = client.getresponse()
+                assert reply.status == 200
+                results.append(reply.read().split()[0])
+            return results
+
+        assert labels() == [b"old", b"new"] * 2  # TCP probes accept both listening peers.
+        held.request("GET", "/api/hold")
+        assert old.started.wait(3)
+        policy = {"balance": "least_connections", "health_interval_secs": 1, "health_path": "/ready"}
+        publish(config, {"proxy": policy})
+        reload(proc, log, b"Japka configuration reloaded")
+        wait_until(proc, log, "503 peer excluded", lambda: labels() == [b"new"] * 4)
+        old.release.set()
+        read_reply(held, "/api/hold", "old")
+
+        publish(config, {"proxy": dict(policy, balance="round_robin", health_interval_secs=0)})
+        reload(proc, log, b"Japka reload rejected:")
+        assert labels() == [b"new"] * 4
+        old.ready_status = 200
+        wait_until(proc, log, "HTTP probes recover the peer", lambda: set(labels()) == {b"old", b"new"})
+
+        # With both peers healthy, least_connections must avoid a busy peer throughout its request.
+        for origin in origins:
+            origin.release.clear()
+            origin.started.clear()
+        held.request("GET", "/api/hold")
+        wait_until(proc, log, "held upstream", lambda: any(o.started.is_set() for o in origins))
+        busy, idle = (old, new) if old.started.is_set() else (new, old)
+        assert labels() == [idle.label.encode()] * 4
+        busy.release.set()
+        read_reply(held, "/api/hold", busy.label)
+        assert proc.poll() is None
+        print("Same-process TCP-to-HTTP probe reload, least-connections routing and invalid update rejection passed.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--http3", action="store_true", help="Also check HTTP/3 using edge.py dependencies")
@@ -263,6 +332,7 @@ def main():
         for label in ("old", "new"):
             make_certificate(work, label)
             origin = stack.enter_context(ThreadingHTTPServer((LOOPBACK, 0), KeepAliveOrigin))
+            origin.ready_status = 200
             origin.label = label
             origin.started, origin.release = Event(), Event()
             origin.write_started, origin.finish_write = Event(), Event()
@@ -270,6 +340,7 @@ def main():
             Thread(target=origin.serve_forever, daemon=True).start()
             stack.callback(origin.shutdown)
             origins.append(origin)
+        check_proxy_reload(work, origins)
         for sendfile in ("0", "1"):
             check(work, origins, sendfile, args.http3)
             print(f"JAPKA_SENDFILE={sendfile}: route and certificate reload, invalid candidate rejection, "

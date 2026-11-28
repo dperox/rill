@@ -4,21 +4,30 @@ Build and test from the repository root on Linux or macOS. On Windows hosts, WSL
 
 Start with the [feature guide](docs/features.md) for a change in observable behavior. It connects each feature to its operator documentation and executable acceptance checks. Keep examples, tests and implementation in the same change. For a bug fix, an existing feature entry and a regression case can be enough.
 
-## Port an NGINX deployment
+## Navigate configuration
 
-1. Capture stdout from `nginx -T` on the source deployment using its active configuration and prefix. Keep the dump local with restricted permissions. It may contain credentials.
-2. Run `japka migrate nginx nginx.dump > migration.json`. Parse stdout as JSON even on exit 2. Exit 0 produces a translated candidate (only when no `server` blocks need review), exit 2 produces a candidate requiring review (expected for any dump with `server` blocks), and exit 1 reports an error. Check `schema_version` and use diagnostic codes, file names, line numbers and contexts to identify affected routes. See the [CLI contract](docs/migration.md) and [JSON Schema](docs/cli-report-v1.schema.json).
-3. Write the reviewed `candidate.config` to a new file and pass `candidate.environment` as literal environment entries. Resolve reported differences before switching traffic, particularly authentication, body limits, upstream Host headers and prefix replacement. Point `JAPKA_CONFIG` at the reviewed file and run `japka config test` with the deployment's working directory, mounts and environment.
-4. Compare NGINX and Japka on separate listeners with representative requests. Check redirects, unknown hosts, denied requests, static paths and what the backend receives for a proxied path with a query string. Retain the original configuration and traffic target for rollback.
+For an operator request, start with the target binary’s `japka --help`. For a deployment plan, use the service’s binary, working directory, startup environment and mounts.
 
-## Deploy and verify Japka
+1. **Find the setting.** Run `japka config list --json` for startup variables, accepted values, defaults and aliases. Run `japka config schema` for the JSON accepted by `JAPKA_CONFIG`. For HTTP balancing and health checks, the catalog’s `file_field` points to the reloadable `proxy` field.
+2. **Inspect the baseline.** With `JAPKA_CONFIG` pointing to the active file, run `japka config show --json`. This resolves inputs from disk and the environment. Check `effective.routes_source` and `effective.routes` before editing a route. An omitted or null `routes` inherits `JAPKA_ROUTES` and `UPSTREAMS`. An explicit list replaces both, including when the list is empty.
+3. **Draft and validate.** Copy the active JSON to a sibling candidate so relative site and certificate paths resolve the same way. Preserve unrelated fields. To add a route to an inherited list, use the effective routes as the starting list. Run `JAPKA_CONFIG="$candidate" japka config test`, with `candidate` set to the candidate’s path. On exit 1, inspect `diagnostics[].message` and the optional `path`, fix the proposal, and rerun.
+4. **Prepare the human review.** Run `japka config plan "$JAPKA_CONFIG" "$candidate" --json > plan.json`. On exit 0, show `jq -r '.review[]' plan.json` and save the candidate and plan for that revision. Call out removals, changes from inherited to file-defined settings, and the deployment action. File changes can reload on Unix. Startup environment edits and Windows file changes require a process rollout.
+5. **Apply after approval.** Pass the exact reviewed artifacts and approved plan digest to the trusted deploy job. On native Unix, the helper checks the baseline, applies the file and probes the affected route. A failed probe triggers rollback. Regenerate the plan for review if the candidate or baseline changes. [Worked example and deploy procedure](docs/config-review.md)
 
-- **Native Linux or macOS.** From the repo root, run `cargo build --release --locked`. Use `./target/release/japka config test` for preflight, then start the same binary with the same environment. Check a known URL for its expected status and body.
-- **Apple containers.** On Apple silicon, use the [macOS deployment procedure](docs/deployment.md#apple-containers) to preflight the Linux ARM64 image and verify the published port from the Mac.
-- **Windows hosts.** Use the [native Windows procedure](docs/deployment.md#native-windows) to preflight and smoke-test `japka.exe` from PowerShell. Restart the process for configuration changes. For changes to Windows direct file delivery, run `python checks/windows_transmitfile.py` with `JAPKA` set to the native executable and consult the [Windows file settings](docs/static-io.md#windows-transmitfile). WSL2 is an alternative for deployments that need the Linux data path or Unix reloads.
-- **Containers.** Build the [Dockerfile](deploy/Dockerfile) from the repo root. Run the image with `config test` as its arguments and the same read-only mounts and environment intended for service. Site roots and key files must be readable by UID 10001. For Docker commands and volume layouts, use the [deployment guide](docs/deployment.md).
-- **Kubernetes.** Check the intended context and namespace. Make the image available to the nodes, then apply the [manifest](deploy/kubernetes.yaml). Wait for `kubectl rollout status deployment/japka`, verify both replicas are ready, and test an HTTP response through the Service. The base manifest exposes HTTP on 8080. For HTTP/3, verify the TLS port over UDP as well as TCP.
-- **Configuration updates.** On Unix, publish routes, site roots and certificates together using the [reload procedure](docs/reload.md). Check the acceptance or rejection message and exercise the affected host on a fresh connection. Roll out a new process for startup settings such as listeners and access logging.
+### Where to look
+
+| Question | Operator guide | Implementation |
+| --- | --- | --- |
+| Which environment names and defaults does this binary advertise? | [Settings discovery](docs/config-review.md#discover-what-this-binary-accepts) | [Catalog](src/config_review/catalog.rs) · [Legacy alias lookup](src/settings.rs) |
+| Which JSON fields load together and what can reload? | [Reload behavior](docs/reload.md) | [FileConfig and generation loader](src/reload.rs) |
+| Which host, prefix or backend policy will change? | [Routing and HTTP pool settings](docs/routing.md) | [Route selection](src/routing.rs) · [File and environment precedence for pools](src/routing/config.rs) |
+| How are the review and rollout verified? | [Configuration review](docs/config-review.md) | [Plan and effective configuration](src/config_review.rs) · [Unix deploy helper](deploy/apply-config.py) · [Acceptance check](checks/config_review.py) |
+
+## Migrate, deploy and verify
+
+- For NGINX, follow the [migration contract](docs/migration.md). Parse the report on exit 2, resolve the diagnostics, and compare requests on separate listeners before switching traffic.
+- For native, container and Kubernetes installations, use the [deployment guide](docs/deployment.md). Run `japka config test` with the service’s environment, working directory and mounts. After startup, check a known URL for its expected status and body.
+- For Unix file changes, use the [review workflow](docs/config-review.md) or [manual reload procedure](docs/reload.md). Restart the process for startup environment changes and for file changes on Windows.
 
 ## Repo skills
 

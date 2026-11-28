@@ -1,6 +1,6 @@
 # Static file settings
 
-Set `DOCUMENT_ROOT` to an existing directory. The source build defaults to
+Set `DOCUMENT_ROOT` to an existing directory. The native binary defaults to
 `public/` relative to the current working directory. The Docker image uses
 `/app/public`. Direct file transfer (`JAPKA_SENDFILE`) defaults to `1` on Linux
 (via `sendfile`) and Windows (via `TransmitFile`), and `0` on macOS (buffered
@@ -14,7 +14,6 @@ artifacts rather than a source repository or secrets directory.
 
 ## Linux sendfile
 
-`JAPKA_SENDFILE` accepts `0` or `1` and defaults to `1` on Linux and Windows (`0` on macOS).
 Ordinary plaintext HTTP/1 GETs larger than 64 KiB use the open file descriptor
 to transfer directly to the socket when compression is disabled. HEAD and
 matching validators skip reads of the body. Small files through 64 KiB use

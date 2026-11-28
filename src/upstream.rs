@@ -199,37 +199,13 @@ pub struct Health {
 }
 
 impl Health {
-    pub fn from_env() -> io::Result<Option<Self>> {
-        let seconds: u32 = match crate::settings::var("JAPKA_HEALTH_INTERVAL_SECS") {
-            Ok(value) => value.parse().map_err(|_| {
-                io::Error::other("JAPKA_HEALTH_INTERVAL_SECS must be an unsigned integer")
-            })?,
-            Err(env::VarError::NotPresent) => 0,
-            Err(e) => return Err(io::Error::other(format!("JAPKA_HEALTH_INTERVAL_SECS: {e}"))),
-        };
-        let path = match crate::settings::var("JAPKA_HEALTH_PATH") {
-            Ok(s) => {
-                if !s.starts_with('/') {
-                    return Err(io::Error::other("JAPKA_HEALTH_PATH must start with /"));
-                }
-                Some(
-                    s.parse()
-                        .map_err(|e| io::Error::other(format!("JAPKA_HEALTH_PATH: {e}")))?,
-                )
-            }
-            Err(env::VarError::NotPresent) => None,
-            Err(e) => return Err(io::Error::other(format!("JAPKA_HEALTH_PATH: {e}"))),
-        };
-        if path.is_some() && seconds == 0 {
-            return Err(io::Error::other(
-                "JAPKA_HEALTH_PATH requires a positive probe interval",
-            ));
-        }
-        Ok((seconds != 0).then_some(Self {
+    pub(crate) fn new(seconds: u32, path: Option<axum::http::uri::PathAndQuery>) -> Option<Self> {
+        (seconds != 0).then_some(Self {
             interval: Duration::from_secs(seconds.into()),
             path,
-        }))
+        })
     }
+
     pub fn start(&self, pool: &Arc<Pool>) -> Vec<tokio::task::AbortHandle> {
         let mut tasks = Vec::new();
         for i in 0..pool.servers.len() {

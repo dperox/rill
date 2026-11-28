@@ -60,7 +60,7 @@ pub fn validation(result: io::Result<()>) -> io::Result<()> {
             "config test",
             "invalid",
             1,
-            json!({"diagnostics":[{"code":"invalid_configuration","message":e.to_string()}]}),
+            json!({"diagnostics":[crate::settings::diagnostic(&e)]}),
         ),
     }
 }
