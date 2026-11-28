@@ -10,13 +10,26 @@ Japka’s goal is to keep sites fast as they grow, while using less memory and k
 
 ## Try it
 
+### Install with Cargo
+
+Install the published binary from [crates.io](https://crates.io/crates/japka/0.1.0).
+
+```sh
+cargo install japka --version 0.1.0 --locked
+japka --version
+```
+
+The version command prints `japka 0.1.0`. To serve your own files, follow the [Cargo quick start](docs/deployment.md#install-with-cargo). Prebuilt binaries for Linux, macOS, and Windows are available in the [GitHub release](https://github.com/dperox/japka/releases/tag/v0.1.0).
+
+### Run with Docker
+
 Run the bundled sample site with Docker.
 
 ```sh
 docker run --rm -p 127.0.0.1:8080:8080 ghcr.io/dperox/japka:latest
 ```
 
-Open <http://127.0.0.1:8080/> to see **Japka is running**. To run natively, build with `cargo build --release --locked` and start `target/release/japka`. [Deployment guide](docs/deployment.md)
+Open <http://127.0.0.1:8080/> to see **Japka is running**. [Deployment guide](docs/deployment.md)
 
 On Apple silicon, Apple’s `container` can run the same image. [Run on a Mac](docs/deployment.md#macos) · [Native and Apple container benchmarks](bench/macos.md)
 

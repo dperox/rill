@@ -1,5 +1,25 @@
 # Deploy Japka
 
+## Install with Cargo
+
+With a stable Rust toolchain installed, run the following from any directory. Cargo builds the [Japka 0.1.0 crate](https://crates.io/crates/japka/0.1.0) using its published lockfile and installs the `japka` executable.
+
+```sh
+cargo install japka --version 0.1.0 --locked
+japka --version
+```
+
+Japka serves `./public` in its working directory by default. On Linux or macOS, you can try a temporary site by pointing `DOCUMENT_ROOT` at a directory containing an index page.
+
+```sh
+export DOCUMENT_ROOT="$(mktemp -d)"
+printf '%s\n' '<h1>Hello from Japka</h1>' > "$DOCUMENT_ROOT/index.html"
+export LISTEN=127.0.0.1:8080
+japka config test && japka
+```
+
+In a second terminal, run `curl --fail http://127.0.0.1:8080/` to retrieve the page. For an existing site, set `DOCUMENT_ROOT` to its directory. For PowerShell commands, see [Native Windows](#native-windows).
+
 ## macOS
 
 From a source checkout on Apple silicon, package the binary, sample site and licenses together. Use `amd64` for Intel Macs. The archives target macOS 15 and later.
