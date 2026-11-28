@@ -27,3 +27,7 @@ https://github.com/japka-rs/japka/blob/main/AGENTS.md
 - [Migrate an NGINX configuration](migration.md) and review the differences before switching traffic.
 
 For specialized deployments, see [access policies](policy.md), [static file delivery](static-io.md), and [TCP, UDP, and mail forwarding](streams.md).
+
+## Performance
+
+See the [native macOS and Apple container benchmark](performance.md) for static and reverse-proxy throughput, p95 latency, and the [Cargo end-to-end suite](performance.md#run-the-end-to-end-suite).

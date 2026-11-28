@@ -67,6 +67,12 @@ jobs:
         run: |
           python3 checks/sendfile.py
           python3 checks/asset_cache.py
+      - name: Smoke-test the end-to-end performance suite
+        if: runner.os == 'Linux'
+        run: |
+          cargo fmt --manifest-path perf/Cargo.toml --check
+          cargo build --manifest-path perf/Cargo.toml --release --locked
+          python3 perf/run.py --japka target/debug/japka --smoke
       - name: Smoke-test the macOS release archive
         if: runner.os == 'macOS'
         run: |
